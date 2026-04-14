@@ -1,36 +1,79 @@
-export const AtomiqAPI = {
-  // Get a quote for swapping SOL to SAT
-  getQuote: async (amountSOL: number) => {
-    // Mock network delay
-    await new Promise(resolve => setTimeout(resolve, 800));
-    const feeSOL = amountSOL * 0.01; // 1% mock fee
-    const amountSAT = Math.floor(amountSOL * 1_000_000); // Mock rate: 1 SOL = 1M Sats
+import { BitcoinNetwork, SwapperFactory, TypedSwapper, TypedTokens, SwapAmountType } from "@atomiqlabs/sdk";
+import { SolanaInitializer, SolanaSigner } from "@atomiqlabs/chain-solana";
+import { Keypair, Transaction, VersionedTransaction } from '@solana/web3.js';
+
+const chains = [SolanaInitializer] as const;
+type SupportedChains = typeof chains;
+
+const Factory = new SwapperFactory<SupportedChains>(chains);
+export const Tokens: TypedTokens<SupportedChains> = Factory.Tokens;
+
+const solanaRpc = "https://api.mainnet-beta.solana.com";
+
+let swapper: TypedSwapper<SupportedChains> | null = null;
+
+export async function getAtomiqSwapper() {
+    if (!swapper) {
+        swapper = Factory.newSwapper({
+            chains: {
+                SOLANA: { rpcUrl: solanaRpc }
+            },
+            bitcoinNetwork: BitcoinNetwork.MAINNET
+        });
+        await swapper.init();
+    }
+    return swapper;
+}
+
+export function createAnchorWallet(keypair: Keypair) {
+    return {
+        publicKey: keypair.publicKey,
+        signTransaction: async <T extends Transaction | VersionedTransaction>(tx: T) => {
+            if ('version' in tx) {
+                tx.sign([keypair]);
+            } else {
+                tx.partialSign(keypair);
+            }
+            return tx;
+        },
+        signAllTransactions: async <T extends Transaction | VersionedTransaction>(txs: T[]) => {
+            return Promise.all(txs.map(async (tx) => {
+                if ('version' in tx) {
+                    tx.sign([keypair]);
+                } else {
+                    tx.partialSign(keypair);
+                }
+                return tx;
+            }));
+        }
+    };
+}
+
+export async function executeAtomiqSwap(keypair: Keypair, destination: string, amountSat: number) {
+    const swapper = await getAtomiqSwapper();
+    const anchorWallet = createAnchorWallet(keypair);
+    const solanaSigner = new SolanaSigner(anchorWallet);
+
+    const btcAmountStr = (amountSat / 1e8).toFixed(8);
+
+    console.log("Requesting Atomiq Quote in amounts:", btcAmountStr);
     
-    return { 
-      id: `quote_${Date.now()}`, 
-      amountSAT, 
-      feeSOL, 
-      expiry: Date.now() + 30000 
-    };
-  },
+    // Auto-detect if destination is lightning invoice or onchain address
+    // Atomiq API typically auto-routes BOLT11 invoices if we pass them as the destination
+    
+    const swap = await swapper.swap(
+        Tokens.SOLANA.SOL, 
+        Tokens.BITCOIN.BTC, // using default BTC token; Atomiq infers route by destination string format 
+        btcAmountStr,
+        SwapAmountType.EXACT_OUT,
+        solanaSigner.getAddress(),
+        destination 
+    );
 
-  // Initialize the swap, returning the Solana transaction hex that the user must sign
-  initSwap: async (quoteId: string, sparkInvoice: string) => {
-    await new Promise(resolve => setTimeout(resolve, 600));
-    return { 
-      swapId: `swap_${Date.now()}`, 
-      solanaTxHex: "mock_solana_tx_hex_string_to_sign", 
-      invoice: sparkInvoice 
-    };
-  },
+    console.log("Atomiq Quote Output:", swap.getOutput().toString());
 
-  // Poll for the status of the swap
-  getSwapStatus: async (swapId: string) => {
-    await new Promise(resolve => setTimeout(resolve, 400));
-    // Provide a random chance to complete to simulate waiting
-    const isReady = Math.random() > 0.3;
-    return { 
-      status: isReady ? "completed" : "pending" 
-    };
-  }
-};
+    return await swap.execute(solanaSigner, {
+        onSourceTransactionSent: (txId) => console.log("Atomiq Source Tx:", txId),
+        onSwapSettled: (btcTxId) => console.log("Atomiq Swap Settled:", btcTxId)
+    });
+}

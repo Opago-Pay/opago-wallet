@@ -37,11 +37,8 @@ export default function ReceiveScreen() {
         // EUR to SAT
         satAmount = Math.floor((inputVal / rates.btcToEur) * 1e8);
       }
-      
-      const res = await sparkWallet.createLightningInvoice(satAmount);
-      setInvoice(res);
-
-      // MOCK behavior for hackathon: simulate getting paid 5 seconds later
+      const res = await sparkWallet.createLightningInvoice({ amountSats: satAmount, memo: "Receive to opago-wallet" });
+      setInvoice(res.invoice.encodedInvoice || res.invoice);      // MOCK behavior for hackathon: simulate getting paid 5 seconds later
       setTimeout(async () => {
         await addTransaction('incoming', satAmount, 'SAT');
         Notifications.scheduleNotificationAsync({

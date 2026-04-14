@@ -3,7 +3,8 @@ import * as SecureStore from 'expo-secure-store';
 import { generateMnemonic, mnemonicToSeedSync } from 'bip39';
 import { Keypair } from '@solana/web3.js';
 import bs58 from 'bs58';
-import { SparkWallet } from '../lib/spark';
+import { initializeSparkWallet } from '../lib/spark';
+import type { SparkWallet } from '@buildonspark/spark-sdk';
 import * as Crypto from 'expo-crypto';
 
 const MNEMONIC_STORE_KEY = 'opago_wallet_mnemonic';
@@ -13,6 +14,7 @@ export function useWalletAuth() {
   const [walletReady, setWalletReady] = useState(false);
   const [sparkWallet, setSparkWallet] = useState<SparkWallet | null>(null);
   const [solanaAddress, setSolanaAddress] = useState<string | null>(null);
+  const [solanaKeypair, setSolanaKeypair] = useState<Keypair | null>(null);
 
   const loadOrGenerateWallet = useCallback(async () => {
     try {
@@ -39,6 +41,7 @@ export function useWalletAuth() {
         // await importWallet({ privateKey: solanaSK });
         console.log("Imported wallet to Privy");
         setSolanaAddress(solanaKeypair.publicKey.toBase58());
+        setSolanaKeypair(solanaKeypair);
       } else {
         // Subsequent logins
         console.log("Loaded mnemonic from secure store.");
@@ -46,11 +49,12 @@ export function useWalletAuth() {
         const seed = mnemonicToSeedSync(mnemonic);
         const solanaKeypair = Keypair.fromSeed(seed.slice(0, 32));
         setSolanaAddress(solanaKeypair.publicKey.toBase58());
+        setSolanaKeypair(solanaKeypair);
       }
       
-      // Init Spark
-      const spark = await SparkWallet.initialize({ mnemonicOrSeed: mnemonic });
-      setSparkWallet(spark);
+      // Init Real Spark
+      const spark = await initializeSparkWallet(mnemonic);
+      setSparkWallet(spark as any);
       
       setWalletReady(true);
     } catch (e) {
@@ -65,6 +69,7 @@ export function useWalletAuth() {
     walletReady,
     sparkWallet,
     solanaAddress,
+    solanaKeypair,
     loadOrGenerateWallet
   };
 }

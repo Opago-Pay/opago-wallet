@@ -11,6 +11,9 @@
     "lint": "expo lint"
   },
   "dependencies": {
+    "@atomiqlabs/chain-solana": "^13.2.1",
+    "@atomiqlabs/sdk": "^8.4.4",
+    "@buildonspark/spark-sdk": "^0.7.12",
     "@expo/vector-icons": "^15.0.3",
     "@privy-io/expo": "^0.64.1",
     "@react-navigation/bottom-tabs": "^7.4.0",

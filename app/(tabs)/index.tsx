@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, RefreshControl } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, RefreshControl, TouchableOpacity } from 'react-native';
+import { useRouter } from 'expo-router';
 import { useWalletAuth } from '@/hooks/useWalletAuth';
 import { SparkWallet } from '@/lib/spark';
 import { Connection, PublicKey } from '@solana/web3.js';
@@ -22,8 +23,8 @@ export default function HomeScreen() {
     }
     
     if (sparkWallet) {
-      const btc = await sparkWallet.getBalance();
-      setBtcBalance(btc);
+      const balanceData = await sparkWallet.getBalance();
+      setBtcBalance(Number(balanceData.balance));
     }
     
     if (solanaAddress) {
@@ -63,6 +64,7 @@ export default function HomeScreen() {
 
   const btcInEur = ((btcBalance / 1e8) * rates.btcToEur).toFixed(2);
   const solInEur = (solBalance * rates.solToEur).toFixed(2);
+  const router = useRouter();
 
   return (
     <ScrollView 
@@ -71,6 +73,9 @@ export default function HomeScreen() {
     >
       <View style={styles.header}>
         <Text style={styles.title}>Assets</Text>
+        <TouchableOpacity style={styles.sendButton} onPress={() => router.push('/send')}>
+           <Text style={styles.sendButtonText}>Send</Text>
+        </TouchableOpacity>
       </View>
 
       <View style={styles.card}>
@@ -119,11 +124,25 @@ const styles = StyleSheet.create({
   header: {
     marginTop: 60,
     marginBottom: 20,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
   title: {
     fontSize: 32,
     fontWeight: '800',
     color: '#fff',
+  },
+  sendButton: {
+    backgroundColor: '#a259ff',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+  },
+  sendButtonText: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 14,
   },
   card: {
     backgroundColor: 'rgba(255, 255, 255, 0.05)',
