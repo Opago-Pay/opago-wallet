@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TextInput, TouchableOpacity, ActivityIndicator, Alert, Platform } from 'react-native';
+import { Image } from 'expo-image';
 import { useWalletAuth } from '@/hooks/useWalletAuth';
 import { getAtomiqQuote, executeAtomiqQuote } from '@/lib/atomiq';
 import { addTransaction } from '@/lib/database';
 import { resolveLightningAddress, fetchInvoiceFromLNURLP, decodeLNURL } from '@/lib/lnurl';
 import { useRouter } from 'expo-router';
 import { CameraView, useCameraPermissions } from 'expo-camera';
+import { Ionicons } from '@expo/vector-icons';
 
 const RATES = {
   EUR: 1350,   // 1 EUR = 1,350 SATS 
@@ -20,7 +22,7 @@ export default function SendScreen() {
   const [destination, setDestination] = useState('');
   const [inputValue, setInputValue] = useState('');
   const [currency, setCurrency] = useState<'SAT' | 'EUR' | 'SOL'>('SAT');
-  const [source, setSource] = useState<'spark' | 'atomiq'>('spark');
+  const [source, setSource] = useState<'spark' | 'solana' | 'usdc'>('spark');
   
   const [loading, setLoading] = useState(false);
   const [statusText, setStatusText] = useState('Execute Payload');
@@ -135,9 +137,10 @@ export default function SendScreen() {
         });
         const internalBolt11 = intermediaryInvoiceRes.invoice.encodedInvoice || intermediaryInvoiceRes.invoice;
         
-        const { swap, solanaSigner } = await getAtomiqQuote(solanaKeypair, internalBolt11, parsedAmount);
+        const requestAsset = source === 'usdc' ? 'USDC' : 'SOL';
+        const { swap, solanaSigner } = await getAtomiqQuote(solanaKeypair, internalBolt11, parsedAmount, requestAsset);
         
-        setQuoteData({ swap, solanaSigner, finalBolt11, parsedAmount });
+        setQuoteData({ swap, solanaSigner, finalBolt11, parsedAmount, sourceAsset: requestAsset });
         setQuoteTimer(30);
       }
     } catch (e: any) {
@@ -158,32 +161,49 @@ export default function SendScreen() {
 
   const confirmAtomiqSwap = async () => {
     if (!quoteData) return;
-    setLoading(true);
-    try {
-      setStatusText("Executing Deep Swap...");
-      await executeAtomiqQuote(quoteData.swap, quoteData.solanaSigner);
-      
-      setStatusText("Finalizing LN Hop...");
-      if (!sparkWallet) throw new Error("Spark destroyed");
-      const realBal = Number((await sparkWallet.getBalance()).balance) || 1000;
-      const dynamicFee = Math.max(10, Math.floor(realBal - quoteData.parsedAmount));
-      const res = await sparkWallet.payLightningInvoice({ invoice: quoteData.finalBolt11, maxFeeSats: dynamicFee });
-      
-      await addTransaction('outgoing', quoteData.parsedAmount, 'SOL');
-      setQuoteData(null);
-      setSuccessPreimage(res.preimage || "Network success");
-    } catch (e: any) {
-      let friendlyMsg = e.message || "Failed during dual-hop transfer.";
-      if (friendlyMsg.includes("Total target amount exceeds available balance")) {
-         friendlyMsg = "Insufficient Lightning liquidity to finalize the bridge swap. Please fund your L2 Node.";
-      } else if (friendlyMsg.includes("ALREADY_EXISTS") || friendlyMsg.includes("preimage request already exists")) {
-         friendlyMsg = "This invoice has already been paid or is currently pending. Lightning invoices are strictly single-use. Please generate a new invoice.";
-      }
-      Alert.alert("Bridge Fault", friendlyMsg);
-    } finally {
-      setLoading(false);
-      setStatusText('Execute Payload');
-    }
+    const tokenSymbol = quoteData.sourceAsset || 'SOL';
+    const rawCost = quoteData.swap.getInput()?.amount || 0;
+    const decimals = tokenSymbol === 'USDC' ? 1e6 : 1e9;
+    const costFormatted = (rawCost / decimals).toFixed(6);
+
+    Alert.alert(
+      "Privy Signature Required",
+      `Network: Solana\nContract: Atomiq HTLC Bridge\nCost: ${costFormatted} ${tokenSymbol}\n\nDo you want to sign and broadcast this transaction using your embedded wallet?`,
+      [
+        { text: "Reject", style: "cancel" },
+        { 
+          text: "Sign & Execute",
+          onPress: async () => {
+            setLoading(true);
+            try {
+              setStatusText("Broadcasting Solana Tx...");
+              await executeAtomiqQuote(quoteData.swap, quoteData.solanaSigner);
+              
+              setStatusText("Finalizing LN Hop...");
+              if (!sparkWallet) throw new Error("Spark destroyed");
+              const realBal = Number((await sparkWallet.getBalance()).balance) || 1000;
+              const dynamicFee = Math.max(10, Math.floor(realBal - quoteData.parsedAmount));
+              const res = await sparkWallet.payLightningInvoice({ invoice: quoteData.finalBolt11, maxFeeSats: dynamicFee });
+              
+              await addTransaction('outgoing', quoteData.parsedAmount, tokenSymbol);
+              setQuoteData(null);
+              setSuccessPreimage(res.preimage || "Network success");
+            } catch (e: any) {
+              let friendlyMsg = e.message || "Failed during dual-hop transfer.";
+              if (friendlyMsg.includes("Total target amount exceeds available balance")) {
+                 friendlyMsg = "Insufficient Lightning liquidity to finalize the bridge swap. Please fund your L2 Node.";
+              } else if (friendlyMsg.includes("ALREADY_EXISTS") || friendlyMsg.includes("preimage request already exists")) {
+                 friendlyMsg = "This invoice has already been paid or is currently pending. Lightning invoices are strictly single-use. Please generate a new invoice.";
+              }
+              Alert.alert("Bridge Fault", friendlyMsg);
+            } finally {
+              setLoading(false);
+              setStatusText('Execute Payload');
+            }
+          }
+        }
+      ]
+    );
   };
 
   if (isScanning) {
@@ -227,7 +247,7 @@ export default function SendScreen() {
             <Text style={styles.buttonText}>Return to Dashboard</Text>
          </TouchableOpacity>
          <TouchableOpacity style={{ marginTop: 24 }} onPress={resetState}>
-            <Text style={{ color: '#a259ff', fontWeight: 'bold' }}>Send Another Payment</Text>
+            <Text style={{ color: '#6b5cc3', fontWeight: 'bold' }}>Send Another Payment</Text>
          </TouchableOpacity>
        </View>
      );
@@ -242,7 +262,7 @@ export default function SendScreen() {
          
          <View style={styles.quoteBox}>
             <View style={styles.quoteRow}><Text style={styles.quoteLabel}>Sending:</Text><Text style={styles.quoteVal}>{quoteData.parsedAmount.toLocaleString()} SATS</Text></View>
-            <View style={styles.quoteRow}><Text style={styles.quoteLabel}>Cost:</Text><Text style={styles.quoteVal}>{solCost ? solCost.toFixed(6) : "0.01502"} SOL</Text></View>
+            <View style={styles.quoteRow}><Text style={styles.quoteLabel}>Cost:</Text><Text style={styles.quoteVal}>{costFormatted ? costFormatted : "..."} {tokenSymbol}</Text></View>
          </View>
 
          <TouchableOpacity style={styles.quoteButton} onPress={confirmAtomiqSwap} disabled={loading}>
@@ -257,11 +277,9 @@ export default function SendScreen() {
 
   return (
     <View style={styles.container}>
-      <View style={styles.headerRow}>
+      <View style={styles.header}>
         <Text style={styles.title}>Send & Bridge</Text>
-        <TouchableOpacity onPress={() => router.back()} style={styles.closeBtn}>
-          <Text style={styles.closeBtnText}>✕</Text>
-        </TouchableOpacity>
+        <Image source={require('@/assets/images/logo_new.svg')} style={{ width: 36, height: 36 }} contentFit="contain" />
       </View>
       
       {!walletReady ? (
@@ -271,8 +289,9 @@ export default function SendScreen() {
            
            <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
               <Text style={styles.sourceLabel}>Destination</Text>
-              <TouchableOpacity onPress={openQrScanner}>
-                  <Text style={{ color: '#14F195', fontWeight: 'bold' }}>[ 🔍 Scan QR ]</Text>
+              <TouchableOpacity onPress={openQrScanner} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255, 176, 0, 0.1)', paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20, borderWidth: 1, borderColor: 'rgba(255, 176, 0, 0.4)' }}>
+                  <Ionicons name="scan-outline" size={16} color="#ffb000" style={{ marginRight: 6 }} />
+                  <Text style={{ color: '#ffb000', fontWeight: '800', fontSize: 12, textTransform: 'uppercase', letterSpacing: 1 }}>Scan</Text>
               </TouchableOpacity>
            </View>
            <TextInput 
@@ -301,8 +320,11 @@ export default function SendScreen() {
              <TouchableOpacity style={[styles.toggleBtn, source === 'spark' && styles.activeSparkBtn]} onPress={() => setSource('spark')}>
                <Text style={[styles.toggleText, source === 'spark' && styles.activeText]}>Lightning</Text>
              </TouchableOpacity>
-             <TouchableOpacity style={[styles.toggleBtn, source === 'atomiq' && styles.activeAtomiqBtn]} onPress={() => setSource('atomiq')}>
-               <Text style={[styles.toggleText, source === 'atomiq' && styles.activeText]}>Solana</Text>
+             <TouchableOpacity style={[styles.toggleBtn, source === 'solana' && styles.activeSolanaBtn]} onPress={() => setSource('solana')}>
+               <Text style={[styles.toggleText, source === 'solana' && styles.activeText]}>Solana</Text>
+             </TouchableOpacity>
+             <TouchableOpacity style={[styles.toggleBtn, source === 'usdc' && styles.activeUsdcBtn]} onPress={() => setSource('usdc')}>
+               <Text style={[styles.toggleText, source === 'usdc' && styles.activeText]}>USDC</Text>
              </TouchableOpacity>
            </View>
 
@@ -313,7 +335,7 @@ export default function SendScreen() {
                  <Text style={styles.buttonText}>{statusText}</Text>
                 </View>
              ) : (
-                <Text style={styles.buttonText}>{source === 'atomiq' ? 'Review Swap Quote' : 'Pay Invoice Instantly'}</Text>
+                <Text style={styles.buttonText}>{source !== 'spark' ? 'Review Swap Quote' : 'Pay Invoice Instantly'}</Text>
              )}
            </TouchableOpacity>
          </View>
@@ -323,8 +345,8 @@ export default function SendScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0a0a0c', paddingHorizontal: 16, paddingTop: 60 },
-  headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 30 },
+  container: { flex: 1, backgroundColor: '#0a0a0c', paddingHorizontal: 16 },
+  header: { marginTop: 60, marginBottom: 20, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   title: { fontSize: 32, fontWeight: '800', color: '#fff' },
   closeBtn: { padding: 8, backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 20, width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
   closeBtnText: { color: '#fff', fontSize: 20, fontWeight: '700' },
@@ -341,22 +363,23 @@ const styles = StyleSheet.create({
   toggleContainer: { flexDirection: 'row', marginBottom: 32, backgroundColor: '#1a1a1f', borderRadius: 12, padding: 4 },
   toggleBtn: { flex: 1, paddingVertical: 12, alignItems: 'center', borderRadius: 8 },
   activeSparkBtn: { backgroundColor: '#F7931A' },
-  activeAtomiqBtn: { backgroundColor: '#14F195' },
+  activeSolanaBtn: { backgroundColor: '#14F195' },
+  activeUsdcBtn: { backgroundColor: '#2775CA' },
   toggleText: { color: '#8f8f9d', fontWeight: '700' },
   activeText: { color: '#000' },
-  button: { backgroundColor: '#a259ff', paddingVertical: 16, borderRadius: 12, alignItems: 'center', width: '100%' },
+  button: { backgroundColor: '#6b5cc3', paddingVertical: 16, borderRadius: 12, alignItems: 'center', width: '100%' },
   buttonText: { color: '#000', fontWeight: 'bold', fontSize: 16 },
-  successCircle: { width: 60, height: 60, borderRadius: 30, backgroundColor: '#14F195', justifyContent: 'center', alignItems: 'center', marginBottom: 20 },
+  successCircle: { width: 60, height: 60, borderRadius: 30, backgroundColor: '#ffb000', justifyContent: 'center', alignItems: 'center', marginBottom: 20 },
   checkmark: { color: '#000', fontSize: 32, fontWeight: 'bold' },
   successTitle: { color: '#fff', fontSize: 28, fontWeight: '800', marginBottom: 8 },
   successSubtitle: { color: '#8f8f9d', marginBottom: 20 },
   preimageBox: { backgroundColor: '#1a1a1f', padding: 16, borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', width: '100%', marginBottom: 40 },
-  preimageText: { color: '#a259ff', fontFamily: 'monospace', textAlign: 'center', fontSize: 12 },
+  preimageText: { color: '#6b5cc3', fontFamily: 'monospace', textAlign: 'center', fontSize: 12 },
   quoteTitle: { color: '#fff', fontSize: 32, fontWeight: '800', textAlign: 'center', marginBottom: 8 },
   quoteSubtitle: { color: '#8f8f9d', textAlign: 'center', marginBottom: 32 },
-  quoteBox: { backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 16, padding: 24, marginBottom: 40, borderWidth: 1, borderColor: '#14F195' },
+  quoteBox: { backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 16, padding: 24, marginBottom: 40, borderWidth: 1, borderColor: '#ffb000' },
   quoteRow: { flexDirection: 'row', justifyContent: 'space-between', marginVertical: 8 },
   quoteLabel: { color: '#8f8f9d', fontSize: 18 },
   quoteVal: { color: '#fff', fontSize: 18, fontWeight: '700' },
-  quoteButton: { backgroundColor: '#14F195', paddingVertical: 16, borderRadius: 12, alignItems: 'center', width: '100%' }
+  quoteButton: { backgroundColor: '#ffb000', paddingVertical: 16, borderRadius: 12, alignItems: 'center', width: '100%' }
 });

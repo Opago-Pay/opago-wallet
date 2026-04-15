@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, TextInput, Switch, Alert } from 'react-native';
+import { Image } from 'expo-image';
+import { Ionicons } from '@expo/vector-icons';
 import { useWalletAuth } from '@/hooks/useWalletAuth';
 import QRCode from 'react-native-qrcode-svg';
 import { useExchangeRates } from '@/hooks/useExchangeRates';
@@ -7,6 +9,7 @@ import { addTransaction } from '@/lib/database';
 import * as Notifications from 'expo-notifications';
 import { useRouter } from 'expo-router';
 import * as Clipboard from 'expo-clipboard';
+import { Connection, PublicKey } from '@solana/web3.js';
 
 export default function ReceiveScreen() {
   const router = useRouter();
@@ -71,6 +74,43 @@ export default function ReceiveScreen() {
     return () => clearInterval(interval);
   }, [invoice, isPaid, initialBalance, sparkWallet]);
 
+  // Solana Base Layer Polling
+  const initialSolanaSignature = useRef<string | null>(null);
+
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (network === 'solana' && solanaAddress && !isPaid) {
+      
+      const pollSolana = async () => {
+        try {
+          const connection = new Connection("https://solana-rpc.publicnode.com");
+          const pubkey = new PublicKey(solanaAddress);
+          const sigs = await connection.getSignaturesForAddress(pubkey, { limit: 1 });
+          
+          if (sigs.length > 0) {
+            const topSig = sigs[0].signature;
+            if (!initialSolanaSignature.current) {
+              initialSolanaSignature.current = topSig;
+            } else if (topSig !== initialSolanaSignature.current) {
+              // New signature arrived while on receive screen
+              Notifications.scheduleNotificationAsync({
+                 content: { title: "Deposit Confirmed", body: `Solana Network Transfer Received!`, sound: true },
+                 trigger: null,
+              });
+              setIsPaid(true);
+            }
+          }
+        } catch (e) {
+          // Ignore RPC rate limiting
+        }
+      };
+
+      pollSolana();
+      interval = setInterval(pollSolana, 4000);
+    }
+    return () => clearInterval(interval);
+  }, [network, solanaAddress, isPaid]);
+
   const handleGenerateInvoice = async () => {
     if (!sparkWallet) return;
     setLoading(true);
@@ -123,12 +163,15 @@ export default function ReceiveScreen() {
        <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
          <View style={styles.successCircle}><Text style={styles.checkmark}>✓</Text></View>
          <Text style={styles.successTitle}>Funds Received!</Text>
-         <Text style={styles.successSubtitle}>Payment was securely settled on Lightning.</Text>
-         <TouchableOpacity style={styles.button} onPress={() => router.push('/')}>
+         <Text style={styles.successSubtitle}>Payment securely settled on the {network === 'lightning' ? 'Lightning' : 'Solana'} Network.</Text>
+         <TouchableOpacity style={styles.button} onPress={() => {
+            initialSolanaSignature.current = null;
+            router.push('/');
+         }}>
             <Text style={styles.buttonText}>Return to Home</Text>
          </TouchableOpacity>
-         <TouchableOpacity style={{ marginTop: 24 }} onPress={resetState}>
-            <Text style={{ color: '#a259ff', fontWeight: 'bold' }}>Generate Another</Text>
+         <TouchableOpacity style={{ marginTop: 24 }} onPress={() => { initialSolanaSignature.current = null; resetState(); }}>
+            <Text style={{ color: '#6b5cc3', fontWeight: 'bold' }}>Generate Another</Text>
          </TouchableOpacity>
        </View>
      );
@@ -136,7 +179,10 @@ export default function ReceiveScreen() {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Receive Deposit</Text>
+      <View style={styles.header}>
+        <Text style={styles.title}>Receive Deposit</Text>
+        <Image source={require('@/assets/images/logo_new.svg')} style={{ width: 36, height: 36 }} contentFit="contain" />
+      </View>
       
       {!walletReady ? (
          <Text style={styles.subtitle}>Connecting to Network...</Text>
@@ -170,7 +216,7 @@ export default function ReceiveScreen() {
                 </TouchableOpacity>
                 <TouchableOpacity onPress={() => copyToClipboard(solanaAddress || '', 'Solana Address')} style={styles.copyBox}>
                    <Text style={[styles.invoiceText, { marginBottom: 0, marginRight: 12 }]}>{solanaAddress}</Text>
-                   <Text style={{ color: '#14F195', fontSize: 18 }}>📋</Text>
+                   <Ionicons name="copy-outline" size={20} color="#14F195" />
                 </TouchableOpacity>
              </View>
            ) : (
@@ -181,7 +227,7 @@ export default function ReceiveScreen() {
                    <Text style={[styles.toggleLabel, !isEur && styles.activeLabel]}>SAT</Text>
                    <Switch 
                      value={isEur} onValueChange={setIsEur} 
-                     trackColor={{ false: '#333', true: '#14F195' }} thumbColor="#fff"
+                     trackColor={{ false: '#333', true: '#ffb000' }} thumbColor="#fff"
                    />
                    <Text style={[styles.toggleLabel, isEur && styles.activeLabel]}>EUR</Text>
                  </View>
@@ -213,11 +259,11 @@ export default function ReceiveScreen() {
                  </TouchableOpacity>
                  
                  <TouchableOpacity onPress={() => copyToClipboard(invoice, 'Lightning Invoice')} style={[styles.copyBox, { marginBottom: 16 }]}>
-                    <Text style={[styles.invoiceText, { marginBottom: 0, marginRight: 12 }]}>{invoice.slice(0, 30)}...</Text>
-                    <Text style={{ color: '#a259ff', fontSize: 18 }}>📋</Text>
+                    <Text style={[styles.invoiceText, { flex: 1, marginRight: 12 }]} numberOfLines={1} ellipsizeMode="tail">{invoice.slice(0, 30)}...</Text>
+                    <Ionicons name="copy-outline" size={20} color="#ffb000" />
                  </TouchableOpacity>
 
-                 <ActivityIndicator color="#a259ff" style={{ marginBottom: 16 }} />
+                 <ActivityIndicator color="#6b5cc3" style={{ marginBottom: 16 }} />
                  <TouchableOpacity style={styles.newButton} onPress={resetState}>
                    <Text style={styles.newButtonText}>Cancel & Generate New</Text>
                  </TouchableOpacity>
@@ -231,8 +277,9 @@ export default function ReceiveScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0a0a0c', paddingHorizontal: 16, paddingTop: 60 },
-  title: { fontSize: 32, fontWeight: '800', color: '#fff', marginBottom: 20 },
+  container: { flex: 1, backgroundColor: '#0a0a0c', paddingHorizontal: 16 },
+  header: { marginTop: 60, marginBottom: 20, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  title: { fontSize: 32, fontWeight: '800', color: '#fff' },
   subtitle: { color: '#8f8f9d' },
   card: { backgroundColor: 'rgba(255, 255, 255, 0.05)', borderRadius: 20, padding: 24, alignItems: 'center' },
   cardDesc: { color: '#a0a0ab', marginBottom: 24, textAlign: 'center' },
@@ -242,7 +289,7 @@ const styles = StyleSheet.create({
   activeLabel: { color: '#fff' },
   input: { backgroundColor: '#1a1a1f', color: '#fff', fontSize: 36, fontWeight: '700', textAlign: 'center', width: '80%', paddingVertical: 16, borderRadius: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
   equivalent: { color: '#a0a0ab', marginTop: 8, marginBottom: 24, fontSize: 16 },
-  button: { backgroundColor: '#14F195', paddingVertical: 14, paddingHorizontal: 32, borderRadius: 12, width: '100%', alignItems: 'center' },
+  button: { backgroundColor: '#ffb000', paddingVertical: 14, paddingHorizontal: 32, borderRadius: 12, width: '100%', alignItems: 'center' },
   buttonText: { color: '#000', fontWeight: 'bold', fontSize: 16 },
   invoiceContainer: { width: '100%', alignItems: 'center' },
   qrWrapper: { padding: 16, backgroundColor: '#ffffff', borderRadius: 16, marginBottom: 16, borderWidth: 4, borderColor: '#ffffff' },
@@ -250,7 +297,7 @@ const styles = StyleSheet.create({
   copyBox: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.08)', paddingVertical: 12, paddingHorizontal: 16, borderRadius: 12, marginTop: 8 },
   newButton: { padding: 10 },
   newButtonText: { color: '#ff4444', fontWeight: 'bold' },
-  successCircle: { width: 60, height: 60, borderRadius: 30, backgroundColor: '#14F195', justifyContent: 'center', alignItems: 'center', marginBottom: 20 },
+  successCircle: { width: 60, height: 60, borderRadius: 30, backgroundColor: '#ffb000', justifyContent: 'center', alignItems: 'center', marginBottom: 20 },
   checkmark: { color: '#000', fontSize: 32, fontWeight: 'bold' },
   successTitle: { color: '#fff', fontSize: 28, fontWeight: '800', marginBottom: 8 },
   successSubtitle: { color: '#8f8f9d', marginBottom: 40 },

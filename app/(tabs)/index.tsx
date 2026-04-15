@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, RefreshControl, TouchableOpacity, Image } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, RefreshControl, TouchableOpacity } from 'react-native';
+import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { useWalletAuth, getGlobalSparkWallet, getGlobalWalletReady } from '@/hooks/useWalletAuth';
 import { SparkWallet } from '@/lib/spark';
@@ -64,10 +65,10 @@ export default function HomeScreen() {
     try {
       if (liveSparkWallet) {
         const { transfers } = await liveSparkWallet.getTransfers(15, 0);
+        let sparkHistory: any[] = [];
         
-        // Map the real Spark L2 transfers directly to the UI
         if (transfers && transfers.length > 0) {
-           setTransactions(transfers.map((tx: any) => {
+           sparkHistory = transfers.map((tx: any) => {
              const isIncoming = tx.transferDirection?.toString().toUpperCase() === 'INCOMING';
              const rawAmount = tx.totalValue || (tx.userRequest?.transfer?.totalAmount?.originalValue) || 0;
              return {
@@ -77,8 +78,75 @@ export default function HomeScreen() {
                amount: Math.abs(Number(rawAmount)),
                timestamp: tx.createdTime || tx.createdAt || new Date().toISOString()
              };
-           }));
+           });
         }
+
+        let solHistory: any[] = [];
+        if (solanaAddress) {
+           try {
+             const connection = new Connection("https://solana-rpc.publicnode.com");
+             const pubkey = new PublicKey(solanaAddress);
+             const sigs = await connection.getSignaturesForAddress(pubkey, { limit: 5 });
+             if (sigs.length > 0) {
+                 const parsedTxs = [];
+                 for (const s of sigs) {
+                    try {
+                      const tx = await connection.getParsedTransaction(s.signature, { maxSupportedTransactionVersion: 0 });
+                      if (tx) parsedTxs.push(tx);
+                    } catch(e) {
+                      // Silently skip if one hash fails to parse
+                    }
+                 }
+                 solHistory = parsedTxs.map(tx => {
+                    if (!tx || !tx.meta) return null;
+                    const timestamp = tx.blockTime ? new Date(tx.blockTime * 1000).toISOString() : new Date().toISOString();
+
+                    let tokenDiff = 0;
+                    if (tx.meta.postTokenBalances) {
+                        for (const post of tx.meta.postTokenBalances) {
+                            if (post.owner === solanaAddress || post.owner === pubkey.toBase58()) {
+                                const pre = tx.meta.preTokenBalances?.find((t: any) => t.accountIndex === post.accountIndex);
+                                const diff = (post.uiTokenAmount?.uiAmount || 0) - (pre?.uiTokenAmount?.uiAmount || 0);
+                                if (Math.abs(diff) > 0.0001) {
+                                   tokenDiff = diff;
+                                   break;
+                                }
+                            }
+                        }
+                    }
+                    
+                    if (Math.abs(tokenDiff) > 0.0001) {
+                         return {
+                             id: tx.transaction.signatures[0] + "_token",
+                             type: tokenDiff > 0 ? 'incoming' : 'outgoing',
+                             asset: 'USDC',
+                             amount: Math.abs(tokenDiff),
+                             timestamp
+                         };
+                    }
+
+                    const accountIndex = tx.transaction.message.accountKeys.findIndex((k: any) => k.pubkey.toBase58() === solanaAddress);
+                    if (accountIndex === -1) return null;
+                    const diffLamports = tx.meta.postBalances[accountIndex] - tx.meta.preBalances[accountIndex];
+                    if (Math.abs(diffLamports) < 5000) return null;
+                    
+                    return {
+                        id: tx.transaction.signatures[0],
+                        type: diffLamports > 0 ? 'incoming' : 'outgoing',
+                        asset: 'SOL',
+                        amount: Math.abs(diffLamports / 1e9),
+                        timestamp
+                    };
+                 }).filter(Boolean) as any[];
+             }
+           } catch(e) {
+               console.log("Solana history error:", e);
+           }
+        }
+
+        const mergedHistory = [...sparkHistory, ...solHistory].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+        setTransactions(mergedHistory);
+
         setBtcBalance(realBalance);
       }
     } catch(e) {
@@ -109,19 +177,20 @@ export default function HomeScreen() {
   return (
     <ScrollView 
       style={styles.container} 
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={'#14F195'} />}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={'#ffb000'} />}
     >
       <View style={styles.header}>
         <Text style={styles.title}>Assets</Text>
+        <Image source={require('@/assets/images/logo_new.svg')} style={{ width: 36, height: 36 }} contentFit="contain" />
       </View>
 
-      <View style={styles.card}>
+      <View style={[styles.card, { borderColor: '#ffb000', borderWidth: 1 }]}>
         <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
            <Image source={{ uri: 'https://cryptologos.cc/logos/bitcoin-btc-logo.png' }} style={{ width: 24, height: 24, marginRight: 8 }} />
            <Text style={[styles.cardHeader, { marginBottom: 0 }]}>Lightning</Text>
         </View>
         <Text style={styles.assetValue}>{btcBalance.toLocaleString()} SAT</Text>
-        <Text style={styles.fiatFallback}>≈ €{btcInEur}</Text>
+        <Text style={[styles.fiatFallback, { color: '#ffb000' }]}>≈ €{btcInEur}</Text>
       </View>
 
       <View style={[styles.card, { borderColor: '#14F195', borderWidth: 1 }]}>
@@ -140,7 +209,7 @@ export default function HomeScreen() {
           <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>${usdcBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</Text>
         </View>
 
-        <Text style={styles.addressLabel}>{solanaAddress ? `${solanaAddress.slice(0, 4)}...${solanaAddress.slice(-4)}` : 'Loading...'}</Text>
+        <Text style={[styles.addressLabel, { color: '#14F195' }]}>{solanaAddress ? `${solanaAddress.slice(0, 4)}...${solanaAddress.slice(-4)}` : 'Loading...'}</Text>
       </View>
 
       <View style={styles.txHeader}>
@@ -152,16 +221,22 @@ export default function HomeScreen() {
       ) : (
         transactions.map((tx) => (
           <View key={tx.id} style={styles.txCard}>
-            <View>
-              <Text style={styles.txType}>{tx.type === 'incoming' ? 'Received' : 'Sent'} {tx.asset}</Text>
-              <Text style={styles.txDate}>{new Date(tx.timestamp).toLocaleString()}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <Image 
+                source={{ uri: tx.asset === 'SOL' ? 'https://cryptologos.cc/logos/solana-sol-logo.png' : (tx.asset === 'USDC' ? 'https://cryptologos.cc/logos/usd-coin-usdc-logo.png' : 'https://cryptologos.cc/logos/bitcoin-btc-logo.png') }} 
+                style={{ width: 32, height: 32, marginRight: 12, opacity: tx.type === 'incoming' ? 1.0 : 0.4 }} 
+              />
+              <View>
+                <Text style={styles.txType}>{tx.type === 'incoming' ? 'Received' : 'Sent'} {tx.asset}</Text>
+                <Text style={styles.txDate}>{new Date(tx.timestamp).toLocaleString()}</Text>
+              </View>
             </View>
             <View style={{ alignItems: 'flex-end' }}>
-              <Text style={[styles.txAmount, { color: tx.type === 'incoming' ? '#14F195' : '#fff' }]}>
-                {tx.type === 'incoming' ? '+' : '-'}{tx.amount} SAT
+              <Text style={[styles.txAmount, { color: tx.type === 'incoming' ? (tx.asset === 'SOL' ? '#14F195' : (tx.asset === 'USDC' ? '#2775CA' : '#ffb000')) : '#fff' }]}>
+                {tx.type === 'incoming' ? '+' : '-'}{tx.amount} {tx.asset}
               </Text>
               <Text style={{ color: '#8f8f9d', fontSize: 12, marginTop: 4 }}>
-                ≈ €{((tx.amount / 1e8) * rates.btcToEur).toFixed(2)}
+                ≈ €{ tx.asset === 'SOL' ? (tx.amount * rates.solToEur).toFixed(2) : (tx.asset === 'USDC' ? (tx.amount * 0.92).toFixed(2) : ((tx.amount / 1e8) * rates.btcToEur).toFixed(2)) }
               </Text>
             </View>
           </View>
@@ -191,7 +266,7 @@ const styles = StyleSheet.create({
     color: '#fff',
   },
   sendButton: {
-    backgroundColor: '#a259ff',
+    backgroundColor: '#6b5cc3',
     paddingVertical: 8,
     paddingHorizontal: 16,
     borderRadius: 8,
@@ -227,7 +302,7 @@ const styles = StyleSheet.create({
   },
   addressLabel: {
     marginTop: 12,
-    color: '#14F195',
+    color: '#ffb000',
     fontSize: 14,
     fontFamily: 'monospace'
   },

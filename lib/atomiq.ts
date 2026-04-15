@@ -64,7 +64,7 @@ export function createAnchorWallet(keypair: any) {
     };
 }
 
-export async function getAtomiqQuote(keypair: any, destination: string, amountSat: number) {
+export async function getAtomiqQuote(keypair: any, destination: string, amountSat: number, assetType: 'SOL' | 'USDC' = 'SOL') {
     ensureSDKLoaded();
     const swapper = await getAtomiqSwapper();
     const anchorWallet = createAnchorWallet(keypair);
@@ -74,9 +74,11 @@ export async function getAtomiqQuote(keypair: any, destination: string, amountSa
 
     console.log("Requesting Atomiq Quote in amounts:", btcAmountStr);
     
+    const fromToken = assetType === 'USDC' ? Tokens.SOLANA.USDC : Tokens.SOLANA.SOL;
+    
     // Generates a local quote bounded by the LP liquidity, representing EXACT_OUT parameters
     const swap = await swapper.swap(
-        Tokens.SOLANA.SOL, 
+        fromToken, 
         Tokens.BITCOIN.BTC,
         btcAmountStr,
         atomiqSdk.SwapAmountType.EXACT_OUT,

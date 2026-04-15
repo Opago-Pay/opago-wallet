@@ -59,7 +59,7 @@ export default function LoginScreen() {
           </TouchableOpacity>
 
           {(loggingIn || isInitializing) && (
-            <ActivityIndicator style={{marginTop: 16}} color="#14F195" />
+            <ActivityIndicator style={{marginTop: 16}} color="#ffb000" />
           )}
         </View>
       </View>
@@ -94,7 +94,7 @@ const styles = StyleSheet.create({
     width: width * 0.8,
     height: width * 0.8,
     borderRadius: width * 0.4,
-    backgroundColor: '#a259ff',
+    backgroundColor: '#6b5cc3',
     opacity: 0.15,
     transform: [{ scale: 1.5 }],
   },
@@ -105,7 +105,7 @@ const styles = StyleSheet.create({
     width: width * 0.8,
     height: width * 0.8,
     borderRadius: width * 0.4,
-    backgroundColor: '#14F195', // solana green
+    backgroundColor: '#ffb000', // solana green
     opacity: 0.15,
     transform: [{ scale: 1.5 }],
   },

@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { Image } from 'expo-image';
 import { deleteSecureItem } from '../../lib/storage';
-import { wipeTransactions } from '@/lib/database';
 import { useRouter } from 'expo-router';
 import { wipeWalletGlobally } from '@/hooks/useWalletAuth';
 import { usePrivy } from '@privy-io/expo';
@@ -19,19 +19,15 @@ export default function SettingsScreen() {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Settings</Text>
+      <View style={styles.header}>
+        <Text style={styles.title}>Settings</Text>
+        <Image source={require('@/assets/images/logo_new.svg')} style={{ width: 36, height: 36 }} contentFit="contain" />
+      </View>
       <Text style={styles.subtitle}>Manage your cross-chain wallet keys.</Text>
 
       <View style={styles.section}>
-        <TouchableOpacity style={[styles.dangerButton, { marginBottom: 16, borderColor: '#a259ff', backgroundColor: 'rgba(162, 89, 255, 0.1)' }]} onPress={async () => {
-          await wipeTransactions();
-          router.push('/');
-        }}>
-          <Text style={[styles.dangerButtonText, { color: '#a259ff' }]}>Wipe Local Tx History</Text>
-        </TouchableOpacity>
-
         <TouchableOpacity style={styles.dangerButton} onPress={handleReset}>
-          <Text style={styles.dangerButtonText}>Reset Wallet / Logout</Text>
+          <Text style={styles.dangerButtonText}>Delete Wallet</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -43,13 +39,18 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#0a0a0c',
     paddingHorizontal: 16,
-    paddingTop: 60,
+  },
+  header: {
+    marginTop: 60,
+    marginBottom: 20,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
   title: {
     fontSize: 32,
     fontWeight: '800',
     color: '#fff',
-    marginBottom: 20,
   },
   subtitle: {
     color: '#8f8f9d'
