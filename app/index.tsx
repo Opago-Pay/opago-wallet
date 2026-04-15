@@ -2,17 +2,22 @@ import { Redirect } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { getSecureItem } from '../lib/storage';
 import { View, ActivityIndicator } from 'react-native';
+import { useWalletAuth } from '../hooks/useWalletAuth';
 
 const MNEMONIC_STORE_KEY = 'opago_wallet_mnemonic';
 
 export default function Index() {
   const [loading, setLoading] = useState(true);
   const [hasWallet, setHasWallet] = useState(false);
+  const { loadOrGenerateWallet } = useWalletAuth();
 
   useEffect(() => {
     async function checkAuth() {
       try {
         const item = await getSecureItem(MNEMONIC_STORE_KEY);
+        if (item) {
+          await loadOrGenerateWallet();
+        }
         setHasWallet(!!item);
       } catch (e) {
         // ignore

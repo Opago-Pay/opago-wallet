@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Dimensions } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useWalletAuth } from '@/hooks/useWalletAuth';
+import { useLoginWithOAuth } from '@privy-io/expo';
 
 const { width, height } = Dimensions.get('window');
 
@@ -17,20 +18,15 @@ export default function LoginScreen() {
     }
   }, [walletReady, router]);
 
-  const handleLogin = async () => {
-    try {
-      setLoggingIn(true);
-      // Let Privy handle the auth flow
-      // await login();
-      
-      // For hackathon mock, immediately generate
-      await loadOrGenerateWallet();
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoggingIn(false);
-    }
+  const handlePostAuth = async () => {
+    setLoggingIn(true);
+    await loadOrGenerateWallet();
+    setLoggingIn(false);
   };
+
+  const { login: loginOAuth } = useLoginWithOAuth({
+    onSuccess: handlePostAuth
+  });
 
   return (
     <View style={styles.container}>
@@ -48,15 +44,7 @@ export default function LoginScreen() {
           
           <TouchableOpacity 
             style={[styles.button, styles.providerBtn]} 
-            onPress={handleLogin} disabled={loggingIn || isInitializing}
-          >
-            <Text style={styles.providerIcon}></Text>
-            <Text style={styles.buttonText}>Continue with Apple</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity 
-            style={[styles.button, styles.providerBtn]} 
-            onPress={handleLogin} disabled={loggingIn || isInitializing}
+            onPress={() => loginOAuth({ provider: 'google' })} disabled={loggingIn || isInitializing}
           >
             <Text style={styles.providerIcon}>G</Text>
             <Text style={styles.buttonText}>Continue with Google</Text>
@@ -64,7 +52,7 @@ export default function LoginScreen() {
 
           <TouchableOpacity 
             style={[styles.button, styles.providerBtn]} 
-            onPress={handleLogin} disabled={loggingIn || isInitializing}
+            onPress={() => handlePostAuth()} disabled={loggingIn || isInitializing}
           >
             <Text style={styles.providerIcon}>✉</Text>
             <Text style={styles.buttonText}>Continue with Email</Text>

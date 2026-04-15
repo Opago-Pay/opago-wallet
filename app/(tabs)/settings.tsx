@@ -3,12 +3,16 @@ import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { deleteSecureItem } from '../../lib/storage';
 import { wipeTransactions } from '@/lib/database';
 import { useRouter } from 'expo-router';
+import { wipeWalletGlobally } from '@/hooks/useWalletAuth';
+import { usePrivy } from '@privy-io/expo';
 
 export default function SettingsScreen() {
   const router = useRouter();
+  const { logout } = usePrivy();
 
   const handleReset = async () => {
-    await deleteSecureItem('opago_wallet_mnemonic');
+    await wipeWalletGlobally();
+    if (logout) await logout();
     // Force a hard reload basically by jumping to Login
     router.replace('/(auth)/login');
   };

@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, RefreshControl, TouchableOpacity } from 'react-native';
 import { useRouter } from 'expo-router';
-import { useWalletAuth } from '@/hooks/useWalletAuth';
+import { useWalletAuth, getGlobalSparkWallet, getGlobalWalletReady } from '@/hooks/useWalletAuth';
 import { SparkWallet } from '@/lib/spark';
 import { useExchangeRates } from '@/hooks/useExchangeRates';
 import { Connection, PublicKey } from '@solana/web3.js';
@@ -16,15 +16,17 @@ export default function HomeScreen() {
   const [transactions, setTransactions] = useState<any[]>([]);
 
   const fetchBalancesAndTxs = async () => {
-    if (!sparkWallet && walletReady) {
-      await loadOrGenerateWallet();
+    const liveSparkWallet = getGlobalSparkWallet();
+    const liveWalletReady = getGlobalWalletReady();
+
+    if (!liveSparkWallet && liveWalletReady) {
       return;
     }
     
     let realBalance = 0;
-    if (sparkWallet) {
+    if (liveSparkWallet) {
       try {
-        const balanceData = await sparkWallet.getBalance();
+        const balanceData = await liveSparkWallet.getBalance();
         console.log("💎 [SPARK DIAGNOSTICS] RAW BALANCE YIELD:", JSON.stringify(balanceData, (k, v) => typeof v === 'bigint' ? v.toString() : v));
         
         const settled = Number(balanceData.balance) || 0;
@@ -48,8 +50,8 @@ export default function HomeScreen() {
     }
 
     try {
-      if (sparkWallet) {
-        const { transfers } = await sparkWallet.getTransfers(15, 0);
+      if (liveSparkWallet) {
+        const { transfers } = await liveSparkWallet.getTransfers(15, 0);
         
         // Map the real Spark L2 transfers directly to the UI
         if (transfers && transfers.length > 0) {
@@ -75,8 +77,6 @@ export default function HomeScreen() {
   useEffect(() => {
     if (walletReady) {
       fetchBalancesAndTxs();
-    } else {
-      loadOrGenerateWallet();
     }
   }, [walletReady]);
 
