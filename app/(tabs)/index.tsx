@@ -3,9 +3,8 @@ import { View, Text, StyleSheet, ScrollView, RefreshControl, TouchableOpacity } 
 import { useRouter } from 'expo-router';
 import { useWalletAuth } from '@/hooks/useWalletAuth';
 import { SparkWallet } from '@/lib/spark';
-import { Connection, PublicKey } from '@solana/web3.js';
 import { useExchangeRates } from '@/hooks/useExchangeRates';
-import { initDatabase, getTransactions, Transaction } from '@/lib/database';
+import { Connection, PublicKey } from '@solana/web3.js';
 
 export default function HomeScreen() {
   const { walletReady, sparkWallet, solanaAddress, loadOrGenerateWallet } = useWalletAuth();
@@ -14,7 +13,7 @@ export default function HomeScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [btcBalance, setBtcBalance] = useState(0);
   const [solBalance, setSolBalance] = useState(0);
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [transactions, setTransactions] = useState<any[]>([]);
 
   const fetchBalancesAndTxs = async () => {
     if (!sparkWallet && walletReady) {
@@ -22,9 +21,20 @@ export default function HomeScreen() {
       return;
     }
     
+    let realBalance = 0;
     if (sparkWallet) {
-      const balanceData = await sparkWallet.getBalance();
-      setBtcBalance(Number(balanceData.balance));
+      try {
+        const balanceData = await sparkWallet.getBalance();
+        console.log("💎 [SPARK DIAGNOSTICS] RAW BALANCE YIELD:", JSON.stringify(balanceData, (k, v) => typeof v === 'bigint' ? v.toString() : v));
+        
+        const settled = Number(balanceData.balance) || 0;
+        const incoming = Number(balanceData.satsBalance?.incoming) || 0;
+        realBalance = settled + incoming;
+        
+        console.log("💎 [SPARK DIAGNOSTICS] COMPUTED SATS:", realBalance);
+      } catch(e) {
+        console.error("💎 [SPARK DIAGNOSTICS] Failed to fetch physical balance:", e);
+      }
     }
     
     if (solanaAddress) {
@@ -38,10 +48,28 @@ export default function HomeScreen() {
     }
 
     try {
-      await initDatabase();
-      const txs = await getTransactions();
-      setTransactions(txs);
-    } catch(e) {}
+      if (sparkWallet) {
+        const { transfers } = await sparkWallet.getTransfers(15, 0);
+        
+        // Map the real Spark L2 transfers directly to the UI
+        if (transfers && transfers.length > 0) {
+           setTransactions(transfers.map((tx: any) => {
+             const isIncoming = tx.transferDirection?.toString().toUpperCase() === 'INCOMING';
+             const rawAmount = tx.totalValue || (tx.userRequest?.transfer?.totalAmount?.originalValue) || 0;
+             return {
+               id: tx.id || tx.transferId || Math.random().toString(),
+               type: isIncoming ? 'incoming' : 'outgoing',
+               asset: 'SAT',
+               amount: Math.abs(Number(rawAmount)),
+               timestamp: tx.createdTime || tx.createdAt || new Date().toISOString()
+             };
+           }));
+        }
+        setBtcBalance(realBalance);
+      }
+    } catch(e) {
+      console.error("Failed to fetch real L2 transfers:", e);
+    }
   };
 
   useEffect(() => {
@@ -73,9 +101,6 @@ export default function HomeScreen() {
     >
       <View style={styles.header}>
         <Text style={styles.title}>Assets</Text>
-        <TouchableOpacity style={styles.sendButton} onPress={() => router.push('/send')}>
-           <Text style={styles.sendButtonText}>Send</Text>
-        </TouchableOpacity>
       </View>
 
       <View style={styles.card}>
@@ -104,9 +129,14 @@ export default function HomeScreen() {
               <Text style={styles.txType}>{tx.type === 'incoming' ? 'Received' : 'Sent'} {tx.asset}</Text>
               <Text style={styles.txDate}>{new Date(tx.timestamp).toLocaleString()}</Text>
             </View>
-            <Text style={[styles.txAmount, { color: tx.type === 'incoming' ? '#14F195' : '#fff' }]}>
-              {tx.type === 'incoming' ? '+' : '-'}{tx.amount}
-            </Text>
+            <View style={{ alignItems: 'flex-end' }}>
+              <Text style={[styles.txAmount, { color: tx.type === 'incoming' ? '#14F195' : '#fff' }]}>
+                {tx.type === 'incoming' ? '+' : '-'}{tx.amount} SAT
+              </Text>
+              <Text style={{ color: '#8f8f9d', fontSize: 12, marginTop: 4 }}>
+                ≈ €{((tx.amount / 1e8) * rates.btcToEur).toFixed(2)}
+              </Text>
+            </View>
           </View>
         ))
       )}

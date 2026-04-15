@@ -1,30 +1,74 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, TextInput, Switch } from 'react-native';
+import React, { useState, useEffect, useRef } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, TextInput, Switch, Alert } from 'react-native';
 import { useWalletAuth } from '@/hooks/useWalletAuth';
 import QRCode from 'react-native-qrcode-svg';
 import { useExchangeRates } from '@/hooks/useExchangeRates';
 import { addTransaction } from '@/lib/database';
 import * as Notifications from 'expo-notifications';
+import { useRouter } from 'expo-router';
 
 export default function ReceiveScreen() {
-  const { sparkWallet, walletReady, loadOrGenerateWallet } = useWalletAuth();
+  const router = useRouter();
+  const { sparkWallet, walletReady, loadOrGenerateWallet, solanaAddress } = useWalletAuth();
   const rates = useExchangeRates();
+  
+  const [network, setNetwork] = useState<'lightning' | 'solana'>('lightning');
   
   const [invoice, setInvoice] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [amountStr, setAmountStr] = useState('10');
-  const [isEur, setIsEur] = useState(true);
+  const [isEur, setIsEur] = useState(false);
+  
+  const [isPaid, setIsPaid] = useState(false);
+  const [initialBalance, setInitialBalance] = useState<number>(0);
+  const [invoiceTimestamp, setInvoiceTimestamp] = useState<number>(0);
 
-  React.useEffect(() => {
+  useEffect(() => {
     if (!walletReady) {
       loadOrGenerateWallet();
     }
   }, [walletReady]);
 
-  // Request permissions for notifications
-  React.useEffect(() => {
+  useEffect(() => {
     Notifications.requestPermissionsAsync();
   }, []);
+
+  // Poll Spark SDK for Real Lightning Payment Execution!
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (invoice && !isPaid && sparkWallet) {
+      interval = setInterval(async () => {
+        try {
+          const { transfers } = await sparkWallet.getTransfers(15, 0);
+          const balData = await sparkWallet.getBalance();
+          const settled = Number(balData.balance) || 0;
+          const incoming = Number(balData.satsBalance?.incoming) || 0;
+          const currentBal = settled + incoming;
+          
+          // Network cache evasion: Look for a transfer inside the array that is strictly newer
+          // than when this component entered the polling state. 
+          // (Simulating a fresh push architecture)
+          const latestTx = transfers?.[0];
+          const txTime = latestTx ? new Date(latestTx.createdTime || latestTx.createdAt).getTime() : 0;
+          const isFresh = txTime > invoiceTimestamp;
+          
+          if (isFresh && latestTx?.transferDirection === 'INCOMING' && latestTx?.status !== 'FAILED') {
+            // Real network payment detected via Network Transfers bypassing local Apollo Cache!
+            const rawAmount = latestTx.totalValue || (latestTx.userRequest?.transfer?.totalAmount?.originalValue) || 1;
+            setIsPaid(true);
+            await addTransaction('incoming', rawAmount, 'SAT');
+            Notifications.scheduleNotificationAsync({
+              content: { title: "Payment Received! ⚡", body: `You just received ${rawAmount} SAT` },
+              trigger: null,
+            });
+          }
+        } catch (e) {
+          // ignore polling temp errors
+        }
+      }, 2000); // 2 second lightning fast polling
+    }
+    return () => clearInterval(interval);
+  }, [invoice, isPaid, initialBalance, sparkWallet]);
 
   const handleGenerateInvoice = async () => {
     if (!sparkWallet) return;
@@ -34,92 +78,142 @@ export default function ReceiveScreen() {
       let satAmount = inputVal;
       
       if (isEur) {
-        // EUR to SAT
         satAmount = Math.floor((inputVal / rates.btcToEur) * 1e8);
       }
-      const res = await sparkWallet.createLightningInvoice({ amountSats: satAmount, memo: "Receive to opago-wallet" });
-      setInvoice(res.invoice.encodedInvoice || res.invoice);      // MOCK behavior for hackathon: simulate getting paid 5 seconds later
-      setTimeout(async () => {
-        await addTransaction('incoming', satAmount, 'SAT');
-        Notifications.scheduleNotificationAsync({
-          content: {
-            title: "Payment Received! ⚡",
-            body: `You received ${satAmount} SAT`,
-          },
-          trigger: null,
-        });
-      }, 5000);
+      
+      // Snapshot balance to detect changes
+      const balData = await sparkWallet.getBalance();
+      setInitialBalance(Number(balData.balance) + Number(balData.satsBalance?.incoming || 0));
+      setInvoiceTimestamp(Date.now() - 2000); // Allow 2 sec buffer for clock drift
+
+      const res = await sparkWallet.createLightningInvoice({ amountSats: satAmount, memo: "Deposit into Opago Wallet" });
+      const rawInvoice = res.invoice.encodedInvoice || res.invoice;
+
+      const finalInvoice = rawInvoice.toLowerCase().startsWith('lightning:') ? rawInvoice : `lightning:${rawInvoice}`;
+      setInvoice(finalInvoice);
+      setIsPaid(false);
 
     } catch(e) {
       console.error(e);
+      Alert.alert("Error", "Could not connect to Spark Nodes");
     } finally {
       setLoading(false);
     }
+  };
+
+  const parsedAmount = parseFloat(amountStr) || 0;
+
+  const resetState = () => {
+    setInvoice(null);
+    setIsPaid(false);
   };
 
   const equivalentText = isEur 
     ? `≈ ${Math.floor((parseFloat(amountStr||'0') / rates.btcToEur) * 1e8)} SAT`
     : `≈ €${((parseFloat(amountStr||'0') / 1e8) * rates.btcToEur).toFixed(2)}`;
 
+  if (isPaid) {
+     return (
+       <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+         <View style={styles.successCircle}><Text style={styles.checkmark}>✓</Text></View>
+         <Text style={styles.successTitle}>Funds Received!</Text>
+         <Text style={styles.successSubtitle}>Payment was securely settled on Lightning.</Text>
+         <TouchableOpacity style={styles.button} onPress={() => router.push('/')}>
+            <Text style={styles.buttonText}>Return to Home</Text>
+         </TouchableOpacity>
+         <TouchableOpacity style={{ marginTop: 24 }} onPress={resetState}>
+            <Text style={{ color: '#a259ff', fontWeight: 'bold' }}>Generate Another</Text>
+         </TouchableOpacity>
+       </View>
+     );
+  }
+
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Receive</Text>
+      <Text style={styles.title}>Receive Deposit</Text>
       
       {!walletReady ? (
-         <Text style={styles.subtitle}>Wallet initializing...</Text>
+         <Text style={styles.subtitle}>Connecting to Network...</Text>
       ) : (
          <View style={styles.card}>
-           <Text style={styles.cardDesc}>Generate a Lightning invoice to receive Sats.</Text>
            
-           {!invoice ? (
-             <View style={styles.inputContainer}>
-                <View style={styles.toggleRow}>
-                  <Text style={[styles.toggleLabel, !isEur && styles.activeLabel]}>SAT</Text>
-                  <Switch 
-                    value={isEur} 
-                    onValueChange={setIsEur} 
-                    trackColor={{ false: '#333', true: '#14F195' }}
-                    thumbColor="#fff"
+           <Text style={styles.sourceLabel}>Network</Text>
+           <View style={styles.networkToggleContainer}>
+             <TouchableOpacity style={[styles.toggleBtn, network === 'lightning' && styles.activeSparkBtn]} onPress={() => setNetwork('lightning')}>
+               <Text style={[styles.toggleText, network === 'lightning' && styles.activeText]}>Lightning</Text>
+             </TouchableOpacity>
+             <TouchableOpacity style={[styles.toggleBtn, network === 'solana' && styles.activeAtomiqBtn]} onPress={() => setNetwork('solana')}>
+               <Text style={[styles.toggleText, network === 'solana' && styles.activeText]}>Solana</Text>
+             </TouchableOpacity>
+           </View>
+
+           {network === 'solana' ? (
+             <View style={styles.invoiceContainer}>
+                <Text style={styles.cardDesc}>Send SOL or SPL Tokens to your base layer address.</Text>
+                <TouchableOpacity 
+                   style={styles.qrWrapper}
+                   onPress={() => Alert.alert("Solana Address", solanaAddress || '')}
+                >
+                  <QRCode
+                    value={solanaAddress || 'loading'}
+                    size={280}
+                    color="#000000"
+                    backgroundColor="#ffffff"
+                    ecl="M"
                   />
-                  <Text style={[styles.toggleLabel, isEur && styles.activeLabel]}>EUR</Text>
-                </View>
-
-                <TextInput 
-                  style={styles.input}
-                  keyboardType="numeric"
-                  value={amountStr}
-                  onChangeText={setAmountStr}
-                  placeholder="0"
-                  placeholderTextColor="#666"
-                />
-                <Text style={styles.equivalent}>{equivalentText}</Text>
-
-                <TouchableOpacity style={styles.button} onPress={handleGenerateInvoice} disabled={loading}>
-                  {loading ? <ActivityIndicator color="#000" /> : <Text style={styles.buttonText}>Generate Invoice</Text>}
                 </TouchableOpacity>
+                <Text style={styles.invoiceText}>{solanaAddress}</Text>
              </View>
            ) : (
-             <View style={styles.invoiceContainer}>
-               <View style={styles.qrWrapper}>
-                  <QRCode
-                    value={invoice}
-                    size={200}
-                    color="#fff"
-                    backgroundColor="#1a1a1f"
-                  />
-               </View>
-
-               <Text style={styles.invoiceText}>{invoice.slice(0, 25)}...</Text>
-               <TouchableOpacity style={styles.newButton} onPress={() => setInvoice(null)}>
-                 <Text style={styles.newButtonText}>Generate Another</Text>
-               </TouchableOpacity>
-             </View>
+            !invoice ? (
+              <View style={styles.inputContainer}>
+                 <Text style={styles.cardDesc}>Enter an amount to create a Lightning Invoice.</Text>
+                 <View style={styles.toggleRow}>
+                   <Text style={[styles.toggleLabel, !isEur && styles.activeLabel]}>SAT</Text>
+                   <Switch 
+                     value={isEur} onValueChange={setIsEur} 
+                     trackColor={{ false: '#333', true: '#14F195' }} thumbColor="#fff"
+                   />
+                   <Text style={[styles.toggleLabel, isEur && styles.activeLabel]}>EUR</Text>
+                 </View>
+ 
+                 <TextInput 
+                   style={styles.input} keyboardType="numeric" value={amountStr}
+                   onChangeText={setAmountStr} placeholder="0" placeholderTextColor="#666"
+                 />
+                 <Text style={styles.equivalent}>{equivalentText}</Text>
+ 
+                 <TouchableOpacity style={styles.button} onPress={handleGenerateInvoice} disabled={loading}>
+                   {loading ? <ActivityIndicator color="#000" /> : <Text style={styles.buttonText}>Generate QR Code</Text>}
+                 </TouchableOpacity>
+              </View>
+            ) : (
+              <View style={styles.invoiceContainer}>
+                 <Text style={styles.cardDesc}>Awaiting lightning settlement...</Text>
+                 <TouchableOpacity 
+                    style={styles.qrWrapper}
+                    onPress={() => {
+                      console.log("INVOICE RAW:", invoice);
+                      Alert.alert("Invoice Data", invoice);
+                    }}
+                 >
+                   <QRCode
+                     value={invoice}
+                     size={280}
+                     color="#000000"
+                     backgroundColor="#ffffff"
+                     ecl="M"
+                   />
+                 </TouchableOpacity>
+ 
+                 <Text style={styles.invoiceText}>{invoice.slice(0, 30)}...</Text>
+                 <ActivityIndicator color="#a259ff" style={{ marginBottom: 16 }} />
+                 <TouchableOpacity style={styles.newButton} onPress={resetState}>
+                   <Text style={styles.newButtonText}>Cancel & Generate New</Text>
+                 </TouchableOpacity>
+              </View>
+            )
            )}
-
-           <View style={styles.staticAddressContainer}>
-              <Text style={styles.staticTitle}>Lightning Address</Text>
-              <Text style={styles.staticAddress}>hackathon@spark.io</Text>
-           </View>
          </View>
       )}
     </View>
@@ -127,108 +221,33 @@ export default function ReceiveScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#0a0a0c',
-    paddingHorizontal: 16,
-    paddingTop: 60,
-  },
-  title: {
-    fontSize: 32,
-    fontWeight: '800',
-    color: '#fff',
-    marginBottom: 20,
-  },
+  container: { flex: 1, backgroundColor: '#0a0a0c', paddingHorizontal: 16, paddingTop: 60 },
+  title: { fontSize: 32, fontWeight: '800', color: '#fff', marginBottom: 20 },
   subtitle: { color: '#8f8f9d' },
-  card: {
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
-    borderRadius: 20,
-    padding: 24,
-    alignItems: 'center',
-  },
-  cardDesc: {
-    color: '#a0a0ab',
-    marginBottom: 24,
-    textAlign: 'center',
-  },
+  card: { backgroundColor: 'rgba(255, 255, 255, 0.05)', borderRadius: 20, padding: 24, alignItems: 'center' },
+  cardDesc: { color: '#a0a0ab', marginBottom: 24, textAlign: 'center' },
   inputContainer: { width: '100%', alignItems: 'center' },
-  toggleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  toggleLabel: {
-    color: '#8f8f9d',
-    marginHorizontal: 8,
-    fontWeight: '600',
-  },
+  toggleRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 16 },
+  toggleLabel: { color: '#8f8f9d', marginHorizontal: 8, fontWeight: '600' },
   activeLabel: { color: '#fff' },
-  input: {
-    backgroundColor: '#1a1a1f',
-    color: '#fff',
-    fontSize: 36,
-    fontWeight: '700',
-    textAlign: 'center',
-    width: '80%',
-    paddingVertical: 16,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)'
-  },
-  equivalent: {
-    color: '#a0a0ab',
-    marginTop: 8,
-    marginBottom: 24,
-    fontSize: 16,
-  },
-  button: {
-    backgroundColor: '#14F195',
-    paddingVertical: 14,
-    paddingHorizontal: 32,
-    borderRadius: 12,
-    width: '100%',
-    alignItems: 'center'
-  },
-  buttonText: {
-    color: '#000',
-    fontWeight: 'bold',
-    fontSize: 16,
-  },
+  input: { backgroundColor: '#1a1a1f', color: '#fff', fontSize: 36, fontWeight: '700', textAlign: 'center', width: '80%', paddingVertical: 16, borderRadius: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
+  equivalent: { color: '#a0a0ab', marginTop: 8, marginBottom: 24, fontSize: 16 },
+  button: { backgroundColor: '#14F195', paddingVertical: 14, paddingHorizontal: 32, borderRadius: 12, width: '100%', alignItems: 'center' },
+  buttonText: { color: '#000', fontWeight: 'bold', fontSize: 16 },
   invoiceContainer: { width: '100%', alignItems: 'center' },
-  qrWrapper: {
-    padding: 16,
-    backgroundColor: '#1a1a1f',
-    borderRadius: 16,
-    marginBottom: 16,
-  },
-  invoiceText: {
-    color: '#8f8f9d',
-    fontFamily: 'monospace',
-    marginBottom: 16,
-  },
+  qrWrapper: { padding: 16, backgroundColor: '#ffffff', borderRadius: 16, marginBottom: 16, borderWidth: 4, borderColor: '#ffffff' },
+  invoiceText: { color: '#8f8f9d', fontFamily: 'monospace', marginBottom: 16, textAlign: 'center' },
   newButton: { padding: 10 },
-  newButtonText: {
-    color: '#a259ff',
-    fontWeight: 'bold'
-  },
-  staticAddressContainer: {
-    marginTop: 32,
-    paddingTop: 24,
-    borderTopWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
-    width: '100%',
-    alignItems: 'center'
-  },
-  staticTitle: {
-    color: '#8f8f9d',
-    fontSize: 12,
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-    marginBottom: 8,
-  },
-  staticAddress: {
-    color: '#a259ff',
-    fontSize: 16,
-    fontWeight: '600',
-  }
+  newButtonText: { color: '#ff4444', fontWeight: 'bold' },
+  successCircle: { width: 60, height: 60, borderRadius: 30, backgroundColor: '#14F195', justifyContent: 'center', alignItems: 'center', marginBottom: 20 },
+  checkmark: { color: '#000', fontSize: 32, fontWeight: 'bold' },
+  successTitle: { color: '#fff', fontSize: 28, fontWeight: '800', marginBottom: 8 },
+  successSubtitle: { color: '#8f8f9d', marginBottom: 40 },
+  sourceLabel: { color: '#8f8f9d', fontSize: 14, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12, alignSelf: 'flex-start' },
+  networkToggleContainer: { flexDirection: 'row', marginBottom: 24, backgroundColor: '#1a1a1f', borderRadius: 12, padding: 4, width: '100%' },
+  toggleBtn: { flex: 1, paddingVertical: 12, alignItems: 'center', borderRadius: 8 },
+  activeSparkBtn: { backgroundColor: '#F7931A' },
+  activeAtomiqBtn: { backgroundColor: '#14F195' },
+  toggleText: { color: '#8f8f9d', fontWeight: '700' },
+  activeText: { color: '#000' },
 });

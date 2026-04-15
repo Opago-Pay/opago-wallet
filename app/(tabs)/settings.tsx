@@ -1,13 +1,14 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
-import * as SecureStore from 'expo-secure-store';
+import { deleteSecureItem } from '../../lib/storage';
+import { wipeTransactions } from '@/lib/database';
 import { useRouter } from 'expo-router';
 
 export default function SettingsScreen() {
   const router = useRouter();
 
   const handleReset = async () => {
-    await SecureStore.deleteItemAsync('opago_wallet_mnemonic');
+    await deleteSecureItem('opago_wallet_mnemonic');
     // Force a hard reload basically by jumping to Login
     router.replace('/(auth)/login');
   };
@@ -18,6 +19,13 @@ export default function SettingsScreen() {
       <Text style={styles.subtitle}>Manage your cross-chain wallet keys.</Text>
 
       <View style={styles.section}>
+        <TouchableOpacity style={[styles.dangerButton, { marginBottom: 16, borderColor: '#a259ff', backgroundColor: 'rgba(162, 89, 255, 0.1)' }]} onPress={async () => {
+          await wipeTransactions();
+          router.push('/');
+        }}>
+          <Text style={[styles.dangerButtonText, { color: '#a259ff' }]}>Wipe Local Tx History</Text>
+        </TouchableOpacity>
+
         <TouchableOpacity style={styles.dangerButton} onPress={handleReset}>
           <Text style={styles.dangerButtonText}>Reset Wallet / Logout</Text>
         </TouchableOpacity>

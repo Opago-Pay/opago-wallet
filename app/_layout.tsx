@@ -1,10 +1,29 @@
 import 'react-native-get-random-values';
+import * as Crypto from 'expo-crypto';
 import { Buffer } from 'buffer';
+
 if (typeof global.Buffer === 'undefined') {
   global.Buffer = Buffer;
 }
 
-import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
+if (typeof global.crypto !== 'object') {
+  (global as any).crypto = {};
+}
+if (!(global as any).crypto.getRandomValues) {
+  (global as any).crypto.getRandomValues = function (array: Uint8Array) {
+    const rnd = Crypto.getRandomBytes(array.byteLength || array.length);
+    for (let i = 0; i < (array.byteLength || array.length); i++) array[i] = rnd[i];
+    return array;
+  };
+}
+if (typeof window !== 'undefined' && !(window as any).crypto) {
+  (window as any).crypto = (global as any).crypto;
+}
+if (typeof globalThis !== 'undefined' && !(globalThis as any).crypto) {
+  (globalThis as any).crypto = (global as any).crypto;
+}
+
+import { DarkTheme, ThemeProvider } from '@react-navigation/native';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import 'react-native-reanimated';
@@ -28,14 +47,13 @@ export default function RootLayout() {
   const colorScheme = useColorScheme();
 
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+    <ThemeProvider value={DarkTheme}>
       <Stack>
         <Stack.Screen name="(auth)" options={{ headerShown: false }} />
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="send" options={{ presentation: 'modal', headerShown: false }} />
         <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
       </Stack>
-      <StatusBar style="auto" />
+      <StatusBar style="light" />
     </ThemeProvider>
   );
 }

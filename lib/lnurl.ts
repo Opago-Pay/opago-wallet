@@ -6,6 +6,13 @@ export interface LNURLPResponse {
   tag: string;
 }
 
+export function decodeLNURL(lnurl: string): string {
+  const { bech32 } = require('bech32');
+  const decoded = bech32.decode(lnurl, 2000);
+  const bytes = bech32.fromWords(decoded.words);
+  return String.fromCharCode(...bytes);
+}
+
 export async function resolveLightningAddress(address: string): Promise<LNURLPResponse> {
   const parts = address.split('@');
   if (parts.length !== 2) throw new Error("Invalid Lightning Address format");
