@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, ActivityIndicator, Alert, Platform } from 'react-native';
+import { View, Text, StyleSheet, TextInput, TouchableOpacity, ActivityIndicator, Alert, Platform, LayoutAnimation } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { Image } from 'expo-image';
 import { useWalletAuth } from '@/hooks/useWalletAuth';
 import { getAtomiqQuote, executeAtomiqQuote } from '@/lib/atomiq';
@@ -156,6 +157,7 @@ export default function SendScreen() {
          setLoading(false);
          setStatusText('Execute Payload');
       }
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
     }
   };
 
@@ -188,6 +190,7 @@ export default function SendScreen() {
               await addTransaction('outgoing', quoteData.parsedAmount, tokenSymbol);
               setQuoteData(null);
               setSuccessPreimage(res.preimage || "Network success");
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
             } catch (e: any) {
               let friendlyMsg = e.message || "Failed during dual-hop transfer.";
               if (friendlyMsg.includes("Total target amount exceeds available balance")) {
@@ -196,6 +199,7 @@ export default function SendScreen() {
                  friendlyMsg = "This invoice has already been paid or is currently pending. Lightning invoices are strictly single-use. Please generate a new invoice.";
               }
               Alert.alert("Bridge Fault", friendlyMsg);
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
             } finally {
               setLoading(false);
               setStatusText('Execute Payload');
@@ -306,10 +310,10 @@ export default function SendScreen() {
                placeholder="0.00" placeholderTextColor="#666" value={inputValue} keyboardType="numeric" onChangeText={setInputValue}
              />
              <View style={styles.currencyToggleMatrix}>
-               <TouchableOpacity onPress={() => setCurrency('EUR')} style={[styles.currencyPill, currency === 'EUR' && styles.currencyActive]}>
+               <TouchableOpacity onPress={() => { Haptics.selectionAsync(); LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); setCurrency('EUR'); }} style={[styles.currencyPill, currency === 'EUR' && styles.currencyActive]}>
                  <Text style={[styles.currencyPillText, currency === 'EUR' && styles.currencyActiveText]}>EUR</Text>
                </TouchableOpacity>
-               <TouchableOpacity onPress={() => setCurrency('SAT')} style={[styles.currencyPill, currency === 'SAT' && styles.currencyActive]}>
+               <TouchableOpacity onPress={() => { Haptics.selectionAsync(); LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); setCurrency('SAT'); }} style={[styles.currencyPill, currency === 'SAT' && styles.currencyActive]}>
                  <Text style={[styles.currencyPillText, currency === 'SAT' && styles.currencyActiveText]}>SAT</Text>
                </TouchableOpacity>
              </View>
@@ -317,13 +321,13 @@ export default function SendScreen() {
 
            <Text style={styles.sourceLabel}>Funding Source</Text>
            <View style={styles.toggleContainer}>
-             <TouchableOpacity style={[styles.toggleBtn, source === 'spark' && styles.activeSparkBtn]} onPress={() => setSource('spark')}>
+             <TouchableOpacity style={[styles.toggleBtn, source === 'spark' && styles.activeSparkBtn]} onPress={() => { Haptics.selectionAsync(); LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); setSource('spark'); }}>
                <Text style={[styles.toggleText, source === 'spark' && styles.activeText]}>Lightning</Text>
              </TouchableOpacity>
-             <TouchableOpacity style={[styles.toggleBtn, source === 'solana' && styles.activeSolanaBtn]} onPress={() => setSource('solana')}>
+             <TouchableOpacity style={[styles.toggleBtn, source === 'solana' && styles.activeSolanaBtn]} onPress={() => { Haptics.selectionAsync(); LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); setSource('solana'); }}>
                <Text style={[styles.toggleText, source === 'solana' && styles.activeText]}>Solana</Text>
              </TouchableOpacity>
-             <TouchableOpacity style={[styles.toggleBtn, source === 'usdc' && styles.activeUsdcBtn]} onPress={() => setSource('usdc')}>
+             <TouchableOpacity style={[styles.toggleBtn, source === 'usdc' && styles.activeUsdcBtn]} onPress={() => { Haptics.selectionAsync(); LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); setSource('usdc'); }}>
                <Text style={[styles.toggleText, source === 'usdc' && styles.activeText]}>USDC</Text>
              </TouchableOpacity>
            </View>
