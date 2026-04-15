@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, RefreshControl, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, RefreshControl, TouchableOpacity, Image } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useWalletAuth, getGlobalSparkWallet, getGlobalWalletReady } from '@/hooks/useWalletAuth';
 import { SparkWallet } from '@/lib/spark';
@@ -13,6 +13,7 @@ export default function HomeScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [btcBalance, setBtcBalance] = useState(0);
   const [solBalance, setSolBalance] = useState(0);
+  const [usdcBalance, setUsdcBalance] = useState(0);
   const [transactions, setTransactions] = useState<any[]>([]);
 
   const fetchBalancesAndTxs = async () => {
@@ -42,10 +43,21 @@ export default function HomeScreen() {
     if (solanaAddress) {
       try {
         const connection = new Connection("https://api.mainnet-beta.solana.com");
-        const balance = await connection.getBalance(new PublicKey(solanaAddress));
+        const pubkey = new PublicKey(solanaAddress);
+        const balance = await connection.getBalance(pubkey);
         setSolBalance(balance / 1e9);
+
+        const USDC_MINT = new PublicKey("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
+        const tokenAccounts = await connection.getParsedTokenAccountsByOwner(pubkey, { mint: USDC_MINT });
+        
+        if (tokenAccounts.value.length > 0) {
+           const usdcAmount = tokenAccounts.value[0].account.data.parsed.info.tokenAmount.uiAmount || 0;
+           setUsdcBalance(usdcAmount);
+        } else {
+           setUsdcBalance(0);
+        }
       } catch (e) {
-        console.error("Failed to fetch SOL balance");
+        console.error("Failed to fetch SOL/USDC balance:", e);
       }
     }
 
@@ -104,15 +116,30 @@ export default function HomeScreen() {
       </View>
 
       <View style={styles.card}>
-        <Text style={styles.cardHeader}>Lightning</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+           <Image source={{ uri: 'https://cryptologos.cc/logos/bitcoin-btc-logo.png' }} style={{ width: 24, height: 24, marginRight: 8 }} />
+           <Text style={[styles.cardHeader, { marginBottom: 0 }]}>Lightning</Text>
+        </View>
         <Text style={styles.assetValue}>{btcBalance.toLocaleString()} SAT</Text>
         <Text style={styles.fiatFallback}>≈ €{btcInEur}</Text>
       </View>
 
       <View style={[styles.card, { borderColor: '#14F195', borderWidth: 1 }]}>
-        <Text style={styles.cardHeader}>Solana</Text>
-        <Text style={styles.assetValue}>{solBalance.toLocaleString()} SOL</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+           <Image source={{ uri: 'https://cryptologos.cc/logos/solana-sol-logo.png' }} style={{ width: 24, height: 24, marginRight: 8 }} />
+           <Text style={[styles.cardHeader, { marginBottom: 0 }]}>Solana</Text>
+        </View>
+        <Text style={styles.assetValue}>{solBalance.toLocaleString(undefined, { maximumFractionDigits: 4 })} SOL</Text>
         <Text style={[styles.fiatFallback, { color: '#14F195' }]}>≈ €{solInEur}</Text>
+        
+        <View style={{ marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderColor: 'rgba(20, 241, 149, 0.2)', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+             <Image source={{ uri: 'https://cryptologos.cc/logos/usd-coin-usdc-logo.png' }} style={{ width: 20, height: 20, marginRight: 8 }} />
+             <Text style={{ color: '#8f8f9d', fontWeight: '600' }}>USDC</Text>
+          </View>
+          <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>${usdcBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</Text>
+        </View>
+
         <Text style={styles.addressLabel}>{solanaAddress ? `${solanaAddress.slice(0, 4)}...${solanaAddress.slice(-4)}` : 'Loading...'}</Text>
       </View>
 

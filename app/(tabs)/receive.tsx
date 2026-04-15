@@ -6,6 +6,7 @@ import { useExchangeRates } from '@/hooks/useExchangeRates';
 import { addTransaction } from '@/lib/database';
 import * as Notifications from 'expo-notifications';
 import { useRouter } from 'expo-router';
+import * as Clipboard from 'expo-clipboard';
 
 export default function ReceiveScreen() {
   const router = useRouter();
@@ -108,6 +109,11 @@ export default function ReceiveScreen() {
     setIsPaid(false);
   };
 
+  const copyToClipboard = async (text: string, label: string) => {
+    await Clipboard.setStringAsync(text);
+    Alert.alert("Copied!", `${label} copied to clipboard.`);
+  };
+
   const equivalentText = isEur 
     ? `≈ ${Math.floor((parseFloat(amountStr||'0') / rates.btcToEur) * 1e8)} SAT`
     : `≈ €${((parseFloat(amountStr||'0') / 1e8) * rates.btcToEur).toFixed(2)}`;
@@ -152,7 +158,7 @@ export default function ReceiveScreen() {
                 <Text style={styles.cardDesc}>Send SOL or SPL Tokens to your base layer address.</Text>
                 <TouchableOpacity 
                    style={styles.qrWrapper}
-                   onPress={() => Alert.alert("Solana Address", solanaAddress || '')}
+                   onPress={() => copyToClipboard(solanaAddress || '', 'Solana Address')}
                 >
                   <QRCode
                     value={solanaAddress || 'loading'}
@@ -162,7 +168,10 @@ export default function ReceiveScreen() {
                     ecl="M"
                   />
                 </TouchableOpacity>
-                <Text style={styles.invoiceText}>{solanaAddress}</Text>
+                <TouchableOpacity onPress={() => copyToClipboard(solanaAddress || '', 'Solana Address')} style={styles.copyBox}>
+                   <Text style={[styles.invoiceText, { marginBottom: 0, marginRight: 12 }]}>{solanaAddress}</Text>
+                   <Text style={{ color: '#14F195', fontSize: 18 }}>📋</Text>
+                </TouchableOpacity>
              </View>
            ) : (
             !invoice ? (
@@ -192,10 +201,7 @@ export default function ReceiveScreen() {
                  <Text style={styles.cardDesc}>Awaiting lightning settlement...</Text>
                  <TouchableOpacity 
                     style={styles.qrWrapper}
-                    onPress={() => {
-                      console.log("INVOICE RAW:", invoice);
-                      Alert.alert("Invoice Data", invoice);
-                    }}
+                    onPress={() => copyToClipboard(invoice, 'Lightning Invoice')}
                  >
                    <QRCode
                      value={invoice}
@@ -205,8 +211,12 @@ export default function ReceiveScreen() {
                      ecl="M"
                    />
                  </TouchableOpacity>
- 
-                 <Text style={styles.invoiceText}>{invoice.slice(0, 30)}...</Text>
+                 
+                 <TouchableOpacity onPress={() => copyToClipboard(invoice, 'Lightning Invoice')} style={[styles.copyBox, { marginBottom: 16 }]}>
+                    <Text style={[styles.invoiceText, { marginBottom: 0, marginRight: 12 }]}>{invoice.slice(0, 30)}...</Text>
+                    <Text style={{ color: '#a259ff', fontSize: 18 }}>📋</Text>
+                 </TouchableOpacity>
+
                  <ActivityIndicator color="#a259ff" style={{ marginBottom: 16 }} />
                  <TouchableOpacity style={styles.newButton} onPress={resetState}>
                    <Text style={styles.newButtonText}>Cancel & Generate New</Text>
@@ -236,7 +246,8 @@ const styles = StyleSheet.create({
   buttonText: { color: '#000', fontWeight: 'bold', fontSize: 16 },
   invoiceContainer: { width: '100%', alignItems: 'center' },
   qrWrapper: { padding: 16, backgroundColor: '#ffffff', borderRadius: 16, marginBottom: 16, borderWidth: 4, borderColor: '#ffffff' },
-  invoiceText: { color: '#8f8f9d', fontFamily: 'monospace', marginBottom: 16, textAlign: 'center' },
+  invoiceText: { color: '#8f8f9d', fontFamily: 'monospace', textAlign: 'center' },
+  copyBox: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.08)', paddingVertical: 12, paddingHorizontal: 16, borderRadius: 12, marginTop: 8 },
   newButton: { padding: 10 },
   newButtonText: { color: '#ff4444', fontWeight: 'bold' },
   successCircle: { width: 60, height: 60, borderRadius: 30, backgroundColor: '#14F195', justifyContent: 'center', alignItems: 'center', marginBottom: 20 },
