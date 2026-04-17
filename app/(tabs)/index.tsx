@@ -231,7 +231,7 @@ export default function HomeScreen() {
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
               <Image 
                 source={{ uri: tx.asset === 'SOL' ? 'https://cryptologos.cc/logos/solana-sol-logo.png' : (tx.asset === 'USDC' ? 'https://cryptologos.cc/logos/usd-coin-usdc-logo.png' : 'https://cryptologos.cc/logos/bitcoin-btc-logo.png') }} 
-                style={{ width: 32, height: 32, marginRight: 12, opacity: tx.type === 'incoming' ? 1.0 : 0.4 }} 
+                style={{ width: 32, height: 32, marginRight: 12 }} 
               />
               <View>
                 <Text style={styles.txType}>{tx.type === 'incoming' ? 'Received' : 'Sent'} {tx.asset}</Text>
@@ -239,9 +239,12 @@ export default function HomeScreen() {
               </View>
             </View>
             <View style={{ alignItems: 'flex-end' }}>
-              <Text style={[styles.txAmount, { color: tx.type === 'incoming' ? '#fff' : '#a0a0ab' }]}>
-                {tx.type === 'incoming' ? '+' : '-'}{tx.amount} {tx.asset}
-              </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Text style={[styles.txAmount, { color: '#fff' }]}>
+                  {tx.type === 'incoming' ? '+' : '-'}{tx.amount} {tx.asset}
+                </Text>
+                <Ionicons name={tx.type === 'incoming' ? 'arrow-down' : 'arrow-up'} size={16} color={tx.type === 'incoming' ? '#14F195' : '#ff4444'} style={{ marginLeft: 6 }} />
+              </View>
               <Text style={{ color: '#8f8f9d', fontSize: 12, marginTop: 4 }}>
                 ≈ €{ tx.asset === 'SOL' ? (tx.amount * rates.solToEur).toFixed(2) : (tx.asset === 'USDC' ? (tx.amount * 0.92).toFixed(2) : ((tx.amount / 1e8) * rates.btcToEur).toFixed(2)) }
               </Text>

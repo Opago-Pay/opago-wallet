@@ -81,7 +81,9 @@ export default function SendScreen() {
       return;
     }
     const parsedAmount = computeSatoshis();
-    if (parsedAmount <= 0) {
+    const isInvoice = destination.trim().toLowerCase().startsWith('lnbc');
+    
+    if (parsedAmount <= 0 && !isInvoice) {
       Alert.alert("Error", "Enter a valid amount.");
       return;
     }
@@ -132,14 +134,8 @@ export default function SendScreen() {
         setStatusText("Fetching Atomiq Quote...");
         if (!sparkWallet || !solanaKeypair) throw new Error("Bridge components missing");
         
-        const intermediaryInvoiceRes = await sparkWallet.createLightningInvoice({ 
-             amountSats: parsedAmount, 
-             memo: "Internal Bridge" 
-        });
-        const internalBolt11 = intermediaryInvoiceRes.invoice.encodedInvoice || intermediaryInvoiceRes.invoice;
-        
         const requestAsset = source === 'usdc' ? 'USDC' : 'SOL';
-        const { swap, solanaSigner } = await getAtomiqQuote(solanaKeypair, internalBolt11, parsedAmount, requestAsset);
+        const { swap, solanaSigner } = await getAtomiqQuote(solanaKeypair, finalBolt11, parsedAmount, requestAsset);
         
         setQuoteData({ swap, solanaSigner, finalBolt11, parsedAmount, sourceAsset: requestAsset });
         setQuoteTimer(30);
@@ -181,15 +177,9 @@ export default function SendScreen() {
               setStatusText("Broadcasting Solana Tx...");
               await executeAtomiqQuote(quoteData.swap, quoteData.solanaSigner);
               
-              setStatusText("Finalizing LN Hop...");
-              if (!sparkWallet) throw new Error("Spark destroyed");
-              const realBal = Number((await sparkWallet.getBalance()).balance) || 1000;
-              const dynamicFee = Math.max(10, Math.floor(realBal - quoteData.parsedAmount));
-              const res = await sparkWallet.payLightningInvoice({ invoice: quoteData.finalBolt11, maxFeeSats: dynamicFee });
-              
               await addTransaction('outgoing', quoteData.parsedAmount, tokenSymbol);
               setQuoteData(null);
-              setSuccessPreimage(res.preimage || "Network success");
+              setSuccessPreimage("Cross-chain swap initiated successfully.");
               Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
             } catch (e: any) {
               let friendlyMsg = e.message || "Failed during dual-hop transfer.";
@@ -293,10 +283,18 @@ export default function SendScreen() {
            
            <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
               <Text style={styles.sourceLabel}>Destination</Text>
-              <TouchableOpacity onPress={openQrScanner} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255, 176, 0, 0.1)', paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20, borderWidth: 1, borderColor: 'rgba(255, 176, 0, 0.4)' }}>
-                  <Ionicons name="scan-outline" size={16} color="#ffb000" style={{ marginRight: 6 }} />
-                  <Text style={{ color: '#ffb000', fontWeight: '800', fontSize: 12, textTransform: 'uppercase', letterSpacing: 1 }}>Scan</Text>
-              </TouchableOpacity>
+              <View style={{ flexDirection: 'row' }}>
+                 {(destination.length > 0 || inputValue.length > 0) && (
+                    <TouchableOpacity onPress={resetState} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255, 68, 68, 0.1)', paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20, borderWidth: 1, borderColor: 'rgba(255, 68, 68, 0.4)', marginRight: 8 }}>
+                        <Ionicons name="trash-outline" size={16} color="#ff4444" style={{ marginRight: 6 }} />
+                        <Text style={{ color: '#ff4444', fontWeight: '800', fontSize: 12, textTransform: 'uppercase', letterSpacing: 1 }}>Clear</Text>
+                    </TouchableOpacity>
+                 )}
+                 <TouchableOpacity onPress={openQrScanner} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255, 176, 0, 0.1)', paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20, borderWidth: 1, borderColor: 'rgba(255, 176, 0, 0.4)' }}>
+                     <Ionicons name="scan-outline" size={16} color="#ffb000" style={{ marginRight: 6 }} />
+                     <Text style={{ color: '#ffb000', fontWeight: '800', fontSize: 12, textTransform: 'uppercase', letterSpacing: 1 }}>Scan</Text>
+                 </TouchableOpacity>
+              </View>
            </View>
            <TextInput 
              style={styles.input} placeholder="BOLT-11 or LN Address" placeholderTextColor="#666"
