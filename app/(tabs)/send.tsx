@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, ActivityIndicator, Alert, Platform } from 'react-native';
+import { View, Text, StyleSheet, TextInput, TouchableOpacity, ActivityIndicator, Alert, Platform, LayoutAnimation } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { Image } from 'expo-image';
 import { useWalletAuth } from '@/hooks/useWalletAuth';
 import { getAtomiqQuote, executeAtomiqQuote } from '@/lib/atomiq';
 import { addTransaction } from '@/lib/database';
-import { resolveLightningAddress, fetchInvoiceFromLNURLP, decodeLNURL } from '@/lib/lnurl';
+import { resolveLightningAddress, fetchInvoiceFromLNURLP, decodeLNURL, resolveLNURL } from '@/lib/lnurl';
 import { useRouter } from 'expo-router';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { Ionicons } from '@expo/vector-icons';
@@ -79,8 +80,20 @@ export default function SendScreen() {
       Alert.alert("Error", "Enter a BOLT-11 invoice or Lightning Address.");
       return;
     }
+    
+    let cleanInput = destination.trim().toLowerCase();
+    
+    // Global URI and BIP21 Extractor
+    if (cleanInput.includes('lightning=')) {
+       cleanInput = cleanInput.split('lightning=')[1].split('&')[0];
+    }
+    cleanInput = cleanInput.replace(/^lightning:/i, '').replace(/^\/\//, '');
+
     const parsedAmount = computeSatoshis();
-    if (parsedAmount <= 0) {
+    const isInvoice = cleanInput.startsWith('lnbc');
+    const isLNURL = cleanInput.startsWith('lnurl1') || cleanInput.includes('@');
+    
+    if (parsedAmount <= 0 && !isInvoice && !isLNURL) {
       Alert.alert("Error", "Enter a valid amount.");
       return;
     }
@@ -89,24 +102,32 @@ export default function SendScreen() {
     setStatusText('Resolving Address...');
 
     try {
-      let cleanInput = destination.trim().toLowerCase();
-      
-      // Global URI and BIP21 Extractor
-      if (cleanInput.includes('lightning=')) {
-         cleanInput = cleanInput.split('lightning=')[1].split('&')[0];
-      }
-      cleanInput = cleanInput.replace(/^lightning:/i, '').replace(/^\/\//, '');
-
       let finalBolt11 = cleanInput;
 
       // Handle Lightning Addresses and LNURL Payloads
       if (cleanInput.includes('@')) {
          const lnurlpInfo = await resolveLightningAddress(cleanInput);
-         finalBolt11 = await fetchInvoiceFromLNURLP(lnurlpInfo.callback, parsedAmount);
+         let amountToPay = parsedAmount;
+         if (amountToPay <= 0) {
+            if (lnurlpInfo.minSendable && lnurlpInfo.minSendable === lnurlpInfo.maxSendable) {
+               amountToPay = Math.floor(lnurlpInfo.minSendable / 1000);
+            } else {
+               throw new Error("Please enter a valid amount for this payment.");
+            }
+         }
+         finalBolt11 = await fetchInvoiceFromLNURLP(lnurlpInfo.callback, amountToPay);
       } else if (cleanInput.startsWith('lnurl1')) {
          setStatusText('Negotiating LNURL...');
-         const callbackUrl = decodeLNURL(cleanInput);
-         finalBolt11 = await fetchInvoiceFromLNURLP(callbackUrl, parsedAmount);
+         const lnurlpInfo = await resolveLNURL(cleanInput);
+         let amountToPay = parsedAmount;
+         if (amountToPay <= 0) {
+            if (lnurlpInfo.minSendable && lnurlpInfo.minSendable === lnurlpInfo.maxSendable) {
+               amountToPay = Math.floor(lnurlpInfo.minSendable / 1000);
+            } else {
+               throw new Error("Please enter a valid amount for this payment.");
+            }
+         }
+         finalBolt11 = await fetchInvoiceFromLNURLP(lnurlpInfo.callback, amountToPay);
       }
       
       // Hunt for exact valid L2 prefix to truncate any remaining URI dirt from the finalized payload
@@ -131,14 +152,8 @@ export default function SendScreen() {
         setStatusText("Fetching Atomiq Quote...");
         if (!sparkWallet || !solanaKeypair) throw new Error("Bridge components missing");
         
-        const intermediaryInvoiceRes = await sparkWallet.createLightningInvoice({ 
-             amountSats: parsedAmount, 
-             memo: "Internal Bridge" 
-        });
-        const internalBolt11 = intermediaryInvoiceRes.invoice.encodedInvoice || intermediaryInvoiceRes.invoice;
-        
         const requestAsset = source === 'usdc' ? 'USDC' : 'SOL';
-        const { swap, solanaSigner } = await getAtomiqQuote(solanaKeypair, internalBolt11, parsedAmount, requestAsset);
+        const { swap, solanaSigner } = await getAtomiqQuote(solanaKeypair, finalBolt11, parsedAmount, requestAsset);
         
         setQuoteData({ swap, solanaSigner, finalBolt11, parsedAmount, sourceAsset: requestAsset });
         setQuoteTimer(30);
@@ -156,6 +171,7 @@ export default function SendScreen() {
          setLoading(false);
          setStatusText('Execute Payload');
       }
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
     }
   };
 
@@ -179,15 +195,10 @@ export default function SendScreen() {
               setStatusText("Broadcasting Solana Tx...");
               await executeAtomiqQuote(quoteData.swap, quoteData.solanaSigner);
               
-              setStatusText("Finalizing LN Hop...");
-              if (!sparkWallet) throw new Error("Spark destroyed");
-              const realBal = Number((await sparkWallet.getBalance()).balance) || 1000;
-              const dynamicFee = Math.max(10, Math.floor(realBal - quoteData.parsedAmount));
-              const res = await sparkWallet.payLightningInvoice({ invoice: quoteData.finalBolt11, maxFeeSats: dynamicFee });
-              
               await addTransaction('outgoing', quoteData.parsedAmount, tokenSymbol);
               setQuoteData(null);
-              setSuccessPreimage(res.preimage || "Network success");
+              setSuccessPreimage("Cross-chain swap initiated successfully.");
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
             } catch (e: any) {
               let friendlyMsg = e.message || "Failed during dual-hop transfer.";
               if (friendlyMsg.includes("Total target amount exceeds available balance")) {
@@ -196,6 +207,7 @@ export default function SendScreen() {
                  friendlyMsg = "This invoice has already been paid or is currently pending. Lightning invoices are strictly single-use. Please generate a new invoice.";
               }
               Alert.alert("Bridge Fault", friendlyMsg);
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
             } finally {
               setLoading(false);
               setStatusText('Execute Payload');
@@ -254,7 +266,10 @@ export default function SendScreen() {
   }
 
   if (quoteData) {
-     const solCost = (quoteData.swap.getInput()?.amount || 0) / 1e9;
+     const tokenSymbol = quoteData.sourceAsset || 'SOL';
+     const rawCost = quoteData.swap.getInput()?.amount || 0;
+     const decimals = tokenSymbol === 'USDC' ? 1e6 : 1e9;
+     const costFormatted = (rawCost / decimals).toFixed(6);
      return (
        <View style={[styles.container, { justifyContent: 'center' }]}>
          <Text style={styles.quoteTitle}>Review Atomiq Quote</Text>
@@ -289,10 +304,18 @@ export default function SendScreen() {
            
            <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
               <Text style={styles.sourceLabel}>Destination</Text>
-              <TouchableOpacity onPress={openQrScanner} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255, 176, 0, 0.1)', paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20, borderWidth: 1, borderColor: 'rgba(255, 176, 0, 0.4)' }}>
-                  <Ionicons name="scan-outline" size={16} color="#ffb000" style={{ marginRight: 6 }} />
-                  <Text style={{ color: '#ffb000', fontWeight: '800', fontSize: 12, textTransform: 'uppercase', letterSpacing: 1 }}>Scan</Text>
-              </TouchableOpacity>
+              <View style={{ flexDirection: 'row' }}>
+                 {(destination.length > 0 || inputValue.length > 0) && (
+                    <TouchableOpacity onPress={resetState} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255, 68, 68, 0.1)', paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20, borderWidth: 1, borderColor: 'rgba(255, 68, 68, 0.4)', marginRight: 8 }}>
+                        <Ionicons name="trash-outline" size={16} color="#ff4444" style={{ marginRight: 6 }} />
+                        <Text style={{ color: '#ff4444', fontWeight: '800', fontSize: 12, textTransform: 'uppercase', letterSpacing: 1 }}>Clear</Text>
+                    </TouchableOpacity>
+                 )}
+                 <TouchableOpacity onPress={openQrScanner} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255, 176, 0, 0.1)', paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20, borderWidth: 1, borderColor: 'rgba(255, 176, 0, 0.4)' }}>
+                     <Ionicons name="scan-outline" size={16} color="#ffb000" style={{ marginRight: 6 }} />
+                     <Text style={{ color: '#ffb000', fontWeight: '800', fontSize: 12, textTransform: 'uppercase', letterSpacing: 1 }}>Scan</Text>
+                 </TouchableOpacity>
+              </View>
            </View>
            <TextInput 
              style={styles.input} placeholder="BOLT-11 or LN Address" placeholderTextColor="#666"
@@ -306,10 +329,10 @@ export default function SendScreen() {
                placeholder="0.00" placeholderTextColor="#666" value={inputValue} keyboardType="numeric" onChangeText={setInputValue}
              />
              <View style={styles.currencyToggleMatrix}>
-               <TouchableOpacity onPress={() => setCurrency('EUR')} style={[styles.currencyPill, currency === 'EUR' && styles.currencyActive]}>
+               <TouchableOpacity onPress={() => { Haptics.selectionAsync(); LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); setCurrency('EUR'); }} style={[styles.currencyPill, currency === 'EUR' && styles.currencyActive]}>
                  <Text style={[styles.currencyPillText, currency === 'EUR' && styles.currencyActiveText]}>EUR</Text>
                </TouchableOpacity>
-               <TouchableOpacity onPress={() => setCurrency('SAT')} style={[styles.currencyPill, currency === 'SAT' && styles.currencyActive]}>
+               <TouchableOpacity onPress={() => { Haptics.selectionAsync(); LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); setCurrency('SAT'); }} style={[styles.currencyPill, currency === 'SAT' && styles.currencyActive]}>
                  <Text style={[styles.currencyPillText, currency === 'SAT' && styles.currencyActiveText]}>SAT</Text>
                </TouchableOpacity>
              </View>
@@ -317,13 +340,13 @@ export default function SendScreen() {
 
            <Text style={styles.sourceLabel}>Funding Source</Text>
            <View style={styles.toggleContainer}>
-             <TouchableOpacity style={[styles.toggleBtn, source === 'spark' && styles.activeSparkBtn]} onPress={() => setSource('spark')}>
+             <TouchableOpacity style={[styles.toggleBtn, source === 'spark' && styles.activeSparkBtn]} onPress={() => { Haptics.selectionAsync(); LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); setSource('spark'); }}>
                <Text style={[styles.toggleText, source === 'spark' && styles.activeText]}>Lightning</Text>
              </TouchableOpacity>
-             <TouchableOpacity style={[styles.toggleBtn, source === 'solana' && styles.activeSolanaBtn]} onPress={() => setSource('solana')}>
+             <TouchableOpacity style={[styles.toggleBtn, source === 'solana' && styles.activeSolanaBtn]} onPress={() => { Haptics.selectionAsync(); LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); setSource('solana'); }}>
                <Text style={[styles.toggleText, source === 'solana' && styles.activeText]}>Solana</Text>
              </TouchableOpacity>
-             <TouchableOpacity style={[styles.toggleBtn, source === 'usdc' && styles.activeUsdcBtn]} onPress={() => setSource('usdc')}>
+             <TouchableOpacity style={[styles.toggleBtn, source === 'usdc' && styles.activeUsdcBtn]} onPress={() => { Haptics.selectionAsync(); LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); setSource('usdc'); }}>
                <Text style={[styles.toggleText, source === 'usdc' && styles.activeText]}>USDC</Text>
              </TouchableOpacity>
            </View>

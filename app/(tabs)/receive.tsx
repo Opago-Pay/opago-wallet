@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, TextInput, Switch, Alert } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, TextInput, Switch, Alert, LayoutAnimation } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
 import { useWalletAuth } from '@/hooks/useWalletAuth';
@@ -57,10 +58,12 @@ export default function ReceiveScreen() {
           const isFresh = txTime > invoiceTimestamp;
           
           if (isFresh && latestTx?.transferDirection === 'INCOMING' && latestTx?.status !== 'FAILED') {
-            // Real network payment detected via Network Transfers bypassing local Apollo Cache!
             const rawAmount = latestTx.totalValue || (latestTx.userRequest?.transfer?.totalAmount?.originalValue) || 1;
+            addTransaction('incoming', rawAmount, 'SAT');
+            
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
             setIsPaid(true);
-            await addTransaction('incoming', rawAmount, 'SAT');
+            
             Notifications.scheduleNotificationAsync({
               content: { title: "Payment Received! ⚡", body: `You just received ${rawAmount} SAT` },
               trigger: null,
@@ -97,6 +100,7 @@ export default function ReceiveScreen() {
                  content: { title: "Deposit Confirmed", body: `Solana Network Transfer Received!`, sound: true },
                  trigger: null,
               });
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
               setIsPaid(true);
             }
           }
@@ -191,10 +195,10 @@ export default function ReceiveScreen() {
            
            <Text style={styles.sourceLabel}>Network</Text>
            <View style={styles.networkToggleContainer}>
-             <TouchableOpacity style={[styles.toggleBtn, network === 'lightning' && styles.activeSparkBtn]} onPress={() => setNetwork('lightning')}>
+             <TouchableOpacity style={[styles.toggleBtn, network === 'lightning' && styles.activeSparkBtn]} onPress={() => { Haptics.selectionAsync(); LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); setNetwork('lightning'); }}>
                <Text style={[styles.toggleText, network === 'lightning' && styles.activeText]}>Lightning</Text>
              </TouchableOpacity>
-             <TouchableOpacity style={[styles.toggleBtn, network === 'solana' && styles.activeAtomiqBtn]} onPress={() => setNetwork('solana')}>
+             <TouchableOpacity style={[styles.toggleBtn, network === 'solana' && styles.activeAtomiqBtn]} onPress={() => { Haptics.selectionAsync(); LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); setNetwork('solana'); }}>
                <Text style={[styles.toggleText, network === 'solana' && styles.activeText]}>Solana</Text>
              </TouchableOpacity>
            </View>

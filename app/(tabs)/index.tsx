@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, RefreshControl, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, RefreshControl, TouchableOpacity, LayoutAnimation } from 'react-native';
+import * as Haptics from 'expo-haptics';
+import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
 import { useRouter } from 'expo-router';
 import { useWalletAuth, getGlobalSparkWallet, getGlobalWalletReady } from '@/hooks/useWalletAuth';
@@ -43,7 +45,7 @@ export default function HomeScreen() {
     
     if (solanaAddress) {
       try {
-        const connection = new Connection("https://api.mainnet-beta.solana.com");
+        const connection = new Connection("https://solana-rpc.publicnode.com");
         const pubkey = new PublicKey(solanaAddress);
         const balance = await connection.getBalance(pubkey);
         setSolBalance(balance / 1e9);
@@ -162,6 +164,7 @@ export default function HomeScreen() {
 
   const onRefresh = async () => {
     setRefreshing(true);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     // Add an artificial delay so you can actually see the sleek animation before it resolves!
     await Promise.all([
       fetchBalancesAndTxs(),
@@ -217,14 +220,18 @@ export default function HomeScreen() {
       </View>
 
       {transactions.length === 0 ? (
-        <Text style={styles.noTxText}>No transactions yet.</Text>
+        <View style={{ alignItems: 'center', marginTop: 40, marginBottom: 20 }}>
+            <Ionicons name="receipt-outline" size={48} color="rgba(255,255,255,0.1)" />
+            <Text style={{ color: '#8f8f9d', marginTop: 12, fontSize: 16, fontWeight: '600' }}>No transactions yet</Text>
+            <Text style={{ color: '#666', marginTop: 4, fontSize: 13, textAlign: 'center', paddingHorizontal: 40 }}>Deposit funds via Lightning or Solana base-layer to see activity here.</Text>
+        </View>
       ) : (
         transactions.map((tx) => (
           <View key={tx.id} style={styles.txCard}>
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
               <Image 
                 source={{ uri: tx.asset === 'SOL' ? 'https://cryptologos.cc/logos/solana-sol-logo.png' : (tx.asset === 'USDC' ? 'https://cryptologos.cc/logos/usd-coin-usdc-logo.png' : 'https://cryptologos.cc/logos/bitcoin-btc-logo.png') }} 
-                style={{ width: 32, height: 32, marginRight: 12, opacity: tx.type === 'incoming' ? 1.0 : 0.4 }} 
+                style={{ width: 32, height: 32, marginRight: 12 }} 
               />
               <View>
                 <Text style={styles.txType}>{tx.type === 'incoming' ? 'Received' : 'Sent'} {tx.asset}</Text>
@@ -232,9 +239,12 @@ export default function HomeScreen() {
               </View>
             </View>
             <View style={{ alignItems: 'flex-end' }}>
-              <Text style={[styles.txAmount, { color: tx.type === 'incoming' ? (tx.asset === 'SOL' ? '#14F195' : (tx.asset === 'USDC' ? '#2775CA' : '#ffb000')) : '#fff' }]}>
-                {tx.type === 'incoming' ? '+' : '-'}{tx.amount} {tx.asset}
-              </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <Text style={[styles.txAmount, { color: '#fff' }]}>
+                  {tx.type === 'incoming' ? '+' : '-'}{tx.amount} {tx.asset}
+                </Text>
+                <Ionicons name={tx.type === 'incoming' ? 'arrow-down' : 'arrow-up'} size={16} color={tx.type === 'incoming' ? '#14F195' : '#ff4444'} style={{ marginLeft: 6 }} />
+              </View>
               <Text style={{ color: '#8f8f9d', fontSize: 12, marginTop: 4 }}>
                 ≈ €{ tx.asset === 'SOL' ? (tx.amount * rates.solToEur).toFixed(2) : (tx.asset === 'USDC' ? (tx.amount * 0.92).toFixed(2) : ((tx.amount / 1e8) * rates.btcToEur).toFixed(2)) }
               </Text>

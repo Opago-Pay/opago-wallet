@@ -13,6 +13,19 @@ export function decodeLNURL(lnurl: string): string {
   return String.fromCharCode(...bytes);
 }
 
+export async function resolveLNURL(lnurl: string): Promise<LNURLPResponse> {
+  const url = decodeLNURL(lnurl);
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP error ${res.status}`);
+    const data = await res.json();
+    if (data.status === 'ERROR') throw new Error(data.reason || "LNURL Error");
+    return data as LNURLPResponse;
+  } catch (error: any) {
+    throw new Error("Failed to resolve LNURL: " + error.message);
+  }
+}
+
 export async function resolveLightningAddress(address: string): Promise<LNURLPResponse> {
   const parts = address.split('@');
   if (parts.length !== 2) throw new Error("Invalid Lightning Address format");
