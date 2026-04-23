@@ -15,12 +15,15 @@ let solanaWeb3: any = null;
 let Factory: any = null;
 export let Tokens: any = null;
 
+let storageRnAsync: any = null;
+
 function ensureSDKLoaded() {
     if (!atomiqSdk) {
         atomiqSdk = require("@atomiqlabs/sdk");
         atomiqBase = require("@atomiqlabs/base");
         atomiqSolana = require("@atomiqlabs/chain-solana");
         solanaWeb3 = require("@solana/web3.js");
+        storageRnAsync = require("@atomiqlabs/storage-rn-async");
         
         Factory = new atomiqSdk.SwapperFactory([atomiqSolana.SolanaInitializer]);
         Tokens = Factory.Tokens;
@@ -38,7 +41,8 @@ export async function getAtomiqSwapper() {
                 SOLANA: { rpcUrl: "https://api.mainnet-beta.solana.com" }
             },
             bitcoinNetwork: atomiqSdk.BitcoinNetwork.MAINNET,
-            chainStorageCtor: () => new atomiqBase.VoidStorageManager()
+            swapStorage: (chainId: any) => new storageRnAsync.RNAsyncUnifiedStorage(`atomiq_sdk_chain_${chainId}_`),
+            chainStorageCtor: (name: any) => new storageRnAsync.RNAsyncStorageManager(`atomiq_sdk_store_${name}_`)
         });
         try {
             await swapper.init();
