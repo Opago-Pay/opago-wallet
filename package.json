@@ -1,5 +1,5 @@
 {
-  "name": "opago-wallet-hackathon",
+  "name": "opago-wallet",
   "main": "index.js",
   "version": "1.0.0",
   "scripts": {

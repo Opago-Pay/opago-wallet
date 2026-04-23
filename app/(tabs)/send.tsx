@@ -5,7 +5,7 @@ import { Image } from 'expo-image';
 import { useWalletAuth } from '@/hooks/useWalletAuth';
 import { getAtomiqQuote, executeAtomiqQuote } from '@/lib/atomiq';
 import { addTransaction } from '@/lib/database';
-import { resolveLightningAddress, fetchInvoiceFromLNURLP, decodeLNURL } from '@/lib/lnurl';
+import { resolveLightningAddress, fetchInvoiceFromLNURLP, decodeLNURL, resolveLNURL } from '@/lib/lnurl';
 import { useRouter } from 'expo-router';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { Ionicons } from '@expo/vector-icons';
@@ -80,10 +80,20 @@ export default function SendScreen() {
       Alert.alert("Error", "Enter a BOLT-11 invoice or Lightning Address.");
       return;
     }
-    const parsedAmount = computeSatoshis();
-    const isInvoice = destination.trim().toLowerCase().startsWith('lnbc');
     
-    if (parsedAmount <= 0 && !isInvoice) {
+    let cleanInput = destination.trim().toLowerCase();
+    
+    // Global URI and BIP21 Extractor
+    if (cleanInput.includes('lightning=')) {
+       cleanInput = cleanInput.split('lightning=')[1].split('&')[0];
+    }
+    cleanInput = cleanInput.replace(/^lightning:/i, '').replace(/^\/\//, '');
+
+    const parsedAmount = computeSatoshis();
+    const isInvoice = cleanInput.startsWith('lnbc');
+    const isLNURL = cleanInput.startsWith('lnurl1') || cleanInput.includes('@');
+    
+    if (parsedAmount <= 0 && !isInvoice && !isLNURL) {
       Alert.alert("Error", "Enter a valid amount.");
       return;
     }
@@ -92,24 +102,32 @@ export default function SendScreen() {
     setStatusText('Resolving Address...');
 
     try {
-      let cleanInput = destination.trim().toLowerCase();
-      
-      // Global URI and BIP21 Extractor
-      if (cleanInput.includes('lightning=')) {
-         cleanInput = cleanInput.split('lightning=')[1].split('&')[0];
-      }
-      cleanInput = cleanInput.replace(/^lightning:/i, '').replace(/^\/\//, '');
-
       let finalBolt11 = cleanInput;
 
       // Handle Lightning Addresses and LNURL Payloads
       if (cleanInput.includes('@')) {
          const lnurlpInfo = await resolveLightningAddress(cleanInput);
-         finalBolt11 = await fetchInvoiceFromLNURLP(lnurlpInfo.callback, parsedAmount);
+         let amountToPay = parsedAmount;
+         if (amountToPay <= 0) {
+            if (lnurlpInfo.minSendable && lnurlpInfo.minSendable === lnurlpInfo.maxSendable) {
+               amountToPay = Math.floor(lnurlpInfo.minSendable / 1000);
+            } else {
+               throw new Error("Please enter a valid amount for this payment.");
+            }
+         }
+         finalBolt11 = await fetchInvoiceFromLNURLP(lnurlpInfo.callback, amountToPay);
       } else if (cleanInput.startsWith('lnurl1')) {
          setStatusText('Negotiating LNURL...');
-         const callbackUrl = decodeLNURL(cleanInput);
-         finalBolt11 = await fetchInvoiceFromLNURLP(callbackUrl, parsedAmount);
+         const lnurlpInfo = await resolveLNURL(cleanInput);
+         let amountToPay = parsedAmount;
+         if (amountToPay <= 0) {
+            if (lnurlpInfo.minSendable && lnurlpInfo.minSendable === lnurlpInfo.maxSendable) {
+               amountToPay = Math.floor(lnurlpInfo.minSendable / 1000);
+            } else {
+               throw new Error("Please enter a valid amount for this payment.");
+            }
+         }
+         finalBolt11 = await fetchInvoiceFromLNURLP(lnurlpInfo.callback, amountToPay);
       }
       
       // Hunt for exact valid L2 prefix to truncate any remaining URI dirt from the finalized payload
@@ -248,7 +266,10 @@ export default function SendScreen() {
   }
 
   if (quoteData) {
-     const solCost = (quoteData.swap.getInput()?.amount || 0) / 1e9;
+     const tokenSymbol = quoteData.sourceAsset || 'SOL';
+     const rawCost = quoteData.swap.getInput()?.amount || 0;
+     const decimals = tokenSymbol === 'USDC' ? 1e6 : 1e9;
+     const costFormatted = (rawCost / decimals).toFixed(6);
      return (
        <View style={[styles.container, { justifyContent: 'center' }]}>
          <Text style={styles.quoteTitle}>Review Atomiq Quote</Text>

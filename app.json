@@ -1,18 +1,18 @@
 {
   "expo": {
-    "name": "opago-wallet-hackathon",
-    "slug": "opago-wallet-hackathon",
+    "name": "opago-wallet",
+    "slug": "opago-wallet",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "opagowallethackathon",
+    "scheme": "opagowallet",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true
     },
     "android": {
-      "package": "com.opago.wallethackathon",
+      "package": "com.opago.wallet",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -50,8 +50,7 @@
       ]
     ],
     "experiments": {
-      "typedRoutes": true,
-      "reactCompiler": true
+      "typedRoutes": true
     },
     "extra": {
       "router": {},
