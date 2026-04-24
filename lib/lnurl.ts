@@ -4,6 +4,15 @@ export interface LNURLPResponse {
   minSendable: number;
   metadata: string;
   tag: string;
+  compliance?: {
+    isSubjectToTravelRule?: boolean;
+    receiverIdentifier?: string;
+  };
+  payerData?: {
+    compliance?: {
+      mandatory?: boolean;
+    };
+  };
 }
 
 export function decodeLNURL(lnurl: string): string {

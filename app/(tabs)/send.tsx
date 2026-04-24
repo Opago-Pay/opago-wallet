@@ -6,9 +6,11 @@ import { useWalletAuth } from '@/hooks/useWalletAuth';
 import { getAtomiqQuote, executeAtomiqQuote } from '@/lib/atomiq';
 import { addTransaction } from '@/lib/database';
 import { resolveLightningAddress, fetchInvoiceFromLNURLP, decodeLNURL, resolveLNURL } from '@/lib/lnurl';
+import { resolveOcpUrl, fetchOcpOptions, fetchOcpExecutionPayload } from '@/lib/ocp';
 import { useRouter } from 'expo-router';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { Ionicons } from '@expo/vector-icons';
+import { Connection, PublicKey } from '@solana/web3.js';
 
 const RATES = {
   EUR: 1350,   // 1 EUR = 1,350 SATS 
@@ -25,6 +27,8 @@ export default function SendScreen() {
   const [currency, setCurrency] = useState<'SAT' | 'EUR' | 'SOL'>('SAT');
   const [source, setSource] = useState<'spark' | 'solana' | 'usdc'>('spark');
   
+  const [balances, setBalances] = useState({ spark: 0, sol: 0, usdc: 0 });
+  
   const [loading, setLoading] = useState(false);
   const [statusText, setStatusText] = useState('Execute Payload');
   
@@ -37,11 +41,41 @@ export default function SendScreen() {
   const [quoteData, setQuoteData] = useState<any>(null);
   const [quoteTimer, setQuoteTimer] = useState(30);
 
+  // OCP State
+  const [ocpData, setOcpData] = useState<any>(null);
+  const [selectedOcpOption, setSelectedOcpOption] = useState<any>(null);
+
   useEffect(() => {
     if (!walletReady) {
       loadOrGenerateWallet();
+    } else {
+      const fetchBals = async () => {
+        try {
+          if (sparkWallet) {
+            const balData = await sparkWallet.getBalance();
+            const settled = Number(balData.balance) || 0;
+            const incoming = Number(balData.satsBalance?.incoming) || 0;
+            setBalances(b => ({ ...b, spark: settled + incoming }));
+          }
+          if (solanaKeypair) {
+             const connection = new globalThis.solanaWeb3.Connection("https://solana-rpc.publicnode.com");
+             const pubkey = solanaKeypair.publicKey;
+             const solBal = await connection.getBalance(pubkey);
+             setBalances(b => ({ ...b, sol: solBal / 1e9 }));
+             
+             const USDC_MINT = new globalThis.solanaWeb3.PublicKey("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
+             const tokenAccounts = await connection.getParsedTokenAccountsByOwner(pubkey, { mint: USDC_MINT });
+             if (tokenAccounts.value.length > 0) {
+                const usdcAmount = tokenAccounts.value[0].account.data.parsed.info.tokenAmount.uiAmount || 0;
+                setBalances(b => ({ ...b, usdc: usdcAmount }));
+             }
+          }
+        } catch(e) {}
+      };
+      // Polyfill solanaWeb3 global if needed, although we can just import Connection
+      fetchBals();
     }
-  }, [walletReady]);
+  }, [walletReady, sparkWallet, solanaKeypair]);
 
   // Quote Timer Effect
   useEffect(() => {
@@ -81,8 +115,27 @@ export default function SendScreen() {
       return;
     }
     
-    let cleanInput = destination.trim().toLowerCase();
+    let rawInput = destination.trim();
+    let cleanInput = rawInput.toLowerCase();
     
+    setStatusText('Resolving Protocol...');
+    setLoading(true);
+
+    try {
+      const apiUrl = await resolveOcpUrl(rawInput);
+      if (apiUrl) {
+         try {
+            const ocpOpts = await fetchOcpOptions(apiUrl);
+            setOcpData({ ...ocpOpts, callbackUrl: apiUrl });
+            setLoading(false);
+            setStatusText('Execute Payload');
+            return;
+         } catch(e) {
+            console.log("Not a valid OCP endpoint, falling back to standard LNURL.");
+         }
+      }
+    } catch(e) {}
+
     // Global URI and BIP21 Extractor
     if (cleanInput.includes('lightning=')) {
        cleanInput = cleanInput.split('lightning=')[1].split('&')[0];
@@ -115,6 +168,9 @@ export default function SendScreen() {
                throw new Error("Please enter a valid amount for this payment.");
             }
          }
+         if (lnurlpInfo.compliance?.isSubjectToTravelRule && lnurlpInfo.payerData?.compliance?.mandatory) {
+            throw new Error("eIDAS Identity Verification (Travel Rule) is required by the receiver, but Phase 4 is not yet implemented.");
+         }
          finalBolt11 = await fetchInvoiceFromLNURLP(lnurlpInfo.callback, amountToPay);
       } else if (cleanInput.startsWith('lnurl1')) {
          setStatusText('Negotiating LNURL...');
@@ -126,6 +182,9 @@ export default function SendScreen() {
             } else {
                throw new Error("Please enter a valid amount for this payment.");
             }
+         }
+         if (lnurlpInfo.compliance?.isSubjectToTravelRule && lnurlpInfo.payerData?.compliance?.mandatory) {
+            throw new Error("eIDAS Identity Verification (Travel Rule) is required by the receiver, but Phase 4 is not yet implemented.");
          }
          finalBolt11 = await fetchInvoiceFromLNURLP(lnurlpInfo.callback, amountToPay);
       }
@@ -244,6 +303,8 @@ export default function SendScreen() {
     setSuccessPreimage(null);
     setDestination('');
     setInputValue('');
+    setOcpData(null);
+    setSelectedOcpOption(null);
   };
 
   if (successPreimage) {
@@ -288,6 +349,75 @@ export default function SendScreen() {
          </TouchableOpacity>
        </View>
      );
+  }
+
+  if (ocpData) {
+    const handleOcpExecute = async () => {
+       if (!selectedOcpOption) return;
+       setLoading(true);
+       try {
+          const payload = await fetchOcpExecutionPayload(ocpData.callbackUrl, selectedOcpOption.method, selectedOcpOption.asset);
+          if (payload.pr && sparkWallet) {
+             const res = await sparkWallet.payLightningInvoice({ invoice: payload.pr, maxFeeSats: 100 });
+             await addTransaction('outgoing', selectedOcpOption.amount, 'SAT');
+             setSuccessPreimage(res.preimage || "OCP Lightning Success");
+          } else if (payload.destination && payload.amount && solanaKeypair) {
+             // For the hackathon, simulate the Solana execution if the payload returns SOL parameters
+             const connection = new globalThis.solanaWeb3.Connection("https://solana-rpc.publicnode.com");
+             const tx = new globalThis.solanaWeb3.Transaction().add(
+                globalThis.solanaWeb3.SystemProgram.transfer({
+                   fromPubkey: solanaKeypair.publicKey,
+                   toPubkey: new globalThis.solanaWeb3.PublicKey(payload.destination),
+                   lamports: Math.floor(payload.amount * 1e9)
+                })
+             );
+             tx.recentBlockhash = (await connection.getLatestBlockhash()).blockhash;
+             tx.feePayer = solanaKeypair.publicKey;
+             tx.sign(solanaKeypair);
+             const sig = await connection.sendRawTransaction(tx.serialize());
+             await addTransaction('outgoing', payload.amount, payload.asset || 'SOL');
+             setSuccessPreimage(sig);
+          }
+       } catch(e: any) {
+          Alert.alert("OCP Execution Failed", e.message || "Could not finalize OpenCryptoPay transaction.");
+       } finally {
+          setLoading(false);
+       }
+    };
+
+    return (
+       <View style={[styles.container, { justifyContent: 'center' }]}>
+         <Text style={styles.quoteTitle}>{ocpData.merchantName || "Merchant Payment"}</Text>
+         <Text style={styles.quoteSubtitle}>Total: {ocpData.fiatAmount} {ocpData.fiatCurrency}</Text>
+         
+         <View style={{ marginBottom: 32 }}>
+            <Text style={styles.sourceLabel}>Select Payment Method</Text>
+            {ocpData.transferAmounts?.map((opt: any, idx: number) => (
+               <TouchableOpacity 
+                  key={idx} 
+                  style={[styles.ocpOptionCard, selectedOcpOption === opt && styles.ocpOptionSelected]}
+                  onPress={() => { Haptics.selectionAsync(); setSelectedOcpOption(opt); }}
+               >
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                     <Image source={{ uri: opt.asset === 'SOL' ? 'https://cryptologos.cc/logos/solana-sol-logo.png' : (opt.asset === 'USDC' ? 'https://cryptologos.cc/logos/usd-coin-usdc-logo.png' : 'https://cryptologos.cc/logos/bitcoin-btc-logo.png') }} style={{ width: 32, height: 32, marginRight: 12 }} />
+                     <View>
+                        <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>{opt.chain} {opt.asset}</Text>
+                        <Text style={{ color: '#8f8f9d', fontSize: 14 }}>Network Fee: {opt.fee} {opt.asset}</Text>
+                     </View>
+                  </View>
+                  <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>{opt.amount} {opt.asset}</Text>
+               </TouchableOpacity>
+            ))}
+         </View>
+
+         <TouchableOpacity style={[styles.button, !selectedOcpOption && { opacity: 0.5 }]} onPress={handleOcpExecute} disabled={loading || !selectedOcpOption}>
+            {loading ? <ActivityIndicator color="#000" /> : <Text style={styles.buttonText}>Pay Now</Text>}
+         </TouchableOpacity>
+         <TouchableOpacity style={{ alignItems: 'center', marginTop: 24 }} onPress={() => setOcpData(null)}>
+            <Text style={{ color: '#ff4444', fontWeight: 'bold' }}>Cancel Payment</Text>
+         </TouchableOpacity>
+       </View>
+    );
   }
 
   return (
@@ -342,12 +472,15 @@ export default function SendScreen() {
            <View style={styles.toggleContainer}>
              <TouchableOpacity style={[styles.toggleBtn, source === 'spark' && styles.activeSparkBtn]} onPress={() => { Haptics.selectionAsync(); LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); setSource('spark'); }}>
                <Text style={[styles.toggleText, source === 'spark' && styles.activeText]}>Lightning</Text>
+               <Text style={[styles.balanceText, source === 'spark' && styles.activeBalanceText]}>{balances.spark.toLocaleString()} SAT</Text>
              </TouchableOpacity>
              <TouchableOpacity style={[styles.toggleBtn, source === 'solana' && styles.activeSolanaBtn]} onPress={() => { Haptics.selectionAsync(); LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); setSource('solana'); }}>
                <Text style={[styles.toggleText, source === 'solana' && styles.activeText]}>Solana</Text>
+               <Text style={[styles.balanceText, source === 'solana' && styles.activeBalanceText]}>{balances.sol.toLocaleString(undefined, {maximumFractionDigits: 2})} SOL</Text>
              </TouchableOpacity>
              <TouchableOpacity style={[styles.toggleBtn, source === 'usdc' && styles.activeUsdcBtn]} onPress={() => { Haptics.selectionAsync(); LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut); setSource('usdc'); }}>
                <Text style={[styles.toggleText, source === 'usdc' && styles.activeText]}>USDC</Text>
+               <Text style={[styles.balanceText, source === 'usdc' && styles.activeBalanceText]}>${balances.usdc.toLocaleString(undefined, {maximumFractionDigits: 2})}</Text>
              </TouchableOpacity>
            </View>
 
@@ -390,6 +523,8 @@ const styles = StyleSheet.create({
   activeUsdcBtn: { backgroundColor: '#2775CA' },
   toggleText: { color: '#8f8f9d', fontWeight: '700' },
   activeText: { color: '#000' },
+  balanceText: { color: '#666', fontSize: 10, marginTop: 4, fontWeight: '600' },
+  activeBalanceText: { color: 'rgba(0,0,0,0.6)' },
   button: { backgroundColor: '#6b5cc3', paddingVertical: 16, borderRadius: 12, alignItems: 'center', width: '100%' },
   buttonText: { color: '#000', fontWeight: 'bold', fontSize: 16 },
   successCircle: { width: 60, height: 60, borderRadius: 30, backgroundColor: '#ffb000', justifyContent: 'center', alignItems: 'center', marginBottom: 20 },
@@ -404,5 +539,7 @@ const styles = StyleSheet.create({
   quoteRow: { flexDirection: 'row', justifyContent: 'space-between', marginVertical: 8 },
   quoteLabel: { color: '#8f8f9d', fontSize: 18 },
   quoteVal: { color: '#fff', fontSize: 18, fontWeight: '700' },
-  quoteButton: { backgroundColor: '#ffb000', paddingVertical: 16, borderRadius: 12, alignItems: 'center', width: '100%' }
+  quoteButton: { backgroundColor: '#ffb000', paddingVertical: 16, borderRadius: 12, alignItems: 'center', width: '100%' },
+  ocpOptionCard: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.03)', padding: 16, borderRadius: 16, marginBottom: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)' },
+  ocpOptionSelected: { borderColor: '#6b5cc3', backgroundColor: 'rgba(107, 92, 195, 0.1)' }
 });

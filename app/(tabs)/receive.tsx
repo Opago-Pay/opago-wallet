@@ -23,6 +23,7 @@ export default function ReceiveScreen() {
   const [loading, setLoading] = useState(false);
   const [amountStr, setAmountStr] = useState('10');
   const [isEur, setIsEur] = useState(false);
+  const [sparkAddress, setSparkAddress] = useState<string | null>(null);
   
   const [isPaid, setIsPaid] = useState(false);
   const [initialBalance, setInitialBalance] = useState<number>(0);
@@ -31,8 +32,12 @@ export default function ReceiveScreen() {
   useEffect(() => {
     if (!walletReady) {
       loadOrGenerateWallet();
+    } else if (sparkWallet && !sparkAddress) {
+      sparkWallet.getSparkAddress().then((addr: any) => {
+        setSparkAddress(typeof addr === 'string' ? addr : addr?.lightningAddress || null);
+      }).catch(console.error);
     }
-  }, [walletReady]);
+  }, [walletReady, sparkWallet]);
 
   useEffect(() => {
     Notifications.requestPermissionsAsync();
@@ -245,6 +250,17 @@ export default function ReceiveScreen() {
                  <TouchableOpacity style={styles.button} onPress={handleGenerateInvoice} disabled={loading}>
                    {loading ? <ActivityIndicator color="#000" /> : <Text style={styles.buttonText}>Generate QR Code</Text>}
                  </TouchableOpacity>
+
+                 {sparkAddress && (
+                   <View style={{ marginTop: 32, width: '100%', alignItems: 'center' }}>
+                     <View style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.1)', width: '100%', marginBottom: 24 }} />
+                     <Text style={styles.sourceLabel}>Static Lightning Address</Text>
+                     <TouchableOpacity onPress={() => copyToClipboard(sparkAddress, 'Lightning Address')} style={styles.copyBox}>
+                        <Text style={[styles.invoiceText, { marginBottom: 0, marginRight: 12 }]}>{sparkAddress}</Text>
+                        <Ionicons name="copy-outline" size={20} color="#ffb000" />
+                     </TouchableOpacity>
+                   </View>
+                 )}
               </View>
             ) : (
               <View style={styles.invoiceContainer}>

@@ -8,6 +8,7 @@ import { useWalletAuth, getGlobalSparkWallet, getGlobalWalletReady } from '@/hoo
 import { SparkWallet } from '@/lib/spark';
 import { useExchangeRates } from '@/hooks/useExchangeRates';
 import { Connection, PublicKey } from '@solana/web3.js';
+import { getTransactions } from '@/lib/database';
 
 export default function HomeScreen() {
   const { walletReady, sparkWallet, solanaAddress, loadOrGenerateWallet } = useWalletAuth();
@@ -146,7 +147,26 @@ export default function HomeScreen() {
            }
         }
 
-        const mergedHistory = [...sparkHistory, ...solHistory].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+        let localHistory: any[] = [];
+        try {
+          localHistory = await getTransactions();
+        } catch(e) {
+          console.log("Local history error:", e);
+        }
+
+        // Deduplicate: If a local tx has same amount, asset, and type as a remote tx within 2 minutes, ignore the local one
+        const mergedRemote = [...sparkHistory, ...solHistory];
+        const filteredLocal = localHistory.filter(localTx => {
+           return !mergedRemote.some(remoteTx => {
+              const timeDiff = Math.abs(new Date(localTx.timestamp).getTime() - new Date(remoteTx.timestamp).getTime());
+              return timeDiff < 120000 && 
+                     remoteTx.amount === localTx.amount && 
+                     remoteTx.asset === localTx.asset && 
+                     remoteTx.type === localTx.type;
+           });
+        });
+
+        const mergedHistory = [...filteredLocal, ...mergedRemote].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
         setTransactions(mergedHistory);
 
         setBtcBalance(realBalance);
