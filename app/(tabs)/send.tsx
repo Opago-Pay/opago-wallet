@@ -1,13 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, StyleSheet, TextInput, TouchableOpacity, ActivityIndicator, Alert, Platform, LayoutAnimation } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { Image } from 'expo-image';
 import { useWalletAuth } from '@/hooks/useWalletAuth';
 import { getAtomiqQuote, executeAtomiqQuote } from '@/lib/atomiq';
 import { addTransaction } from '@/lib/database';
-import { resolveLightningAddress, fetchInvoiceFromLNURLP, decodeLNURL, resolveLNURL } from '@/lib/lnurl';
+import { resolveLightningAddress, fetchInvoiceFromLNURLP, decodeLNURL, resolveLNURL, generateEidasPayerData } from '@/lib/lnurl';
 import { resolveOcpUrl, fetchOcpOptions, fetchOcpExecutionPayload } from '@/lib/ocp';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { Ionicons } from '@expo/vector-icons';
 import { Connection, PublicKey } from '@solana/web3.js';
@@ -38,12 +38,12 @@ export default function SendScreen() {
   const [successPreimage, setSuccessPreimage] = useState<string | null>(null);
 
   // Quote State
-  const [quoteData, setQuoteData] = useState<any>(null);
-  const [quoteTimer, setQuoteTimer] = useState(30);
-
-  // OCP State
   const [ocpData, setOcpData] = useState<any>(null);
   const [selectedOcpOption, setSelectedOcpOption] = useState<any>(null);
+  const [quoteData, setQuoteData] = useState<any>(null);
+  const [quoteTimer, setQuoteTimer] = useState(30);
+  const [pendingEidasInfo, setPendingEidasInfo] = useState<{lnurlpInfo: any, amountToPay: number} | null>(null);
+  const [isNfcScanning, setIsNfcScanning] = useState(false);
 
   useEffect(() => {
     if (!walletReady) {
@@ -109,6 +109,58 @@ export default function SendScreen() {
     return Math.floor(cleanNum);
   };
 
+  const executePaymentWithBolt11 = async (finalBolt11: string, parsedAmount: number) => {
+      // Hunt for exact valid L2 prefix to truncate any remaining URI dirt from the finalized payload
+      const prefixMatch = finalBolt11.match(/(lnbc|lntb|lnsb|lnbcrt)/);
+      if (prefixMatch && !finalBolt11.startsWith(prefixMatch[1])) {
+         finalBolt11 = finalBolt11.substring(finalBolt11.indexOf(prefixMatch[1]));
+      }
+
+      if (!prefixMatch) {
+         throw new Error(`The scanned code is not a valid Lightning invoice. Found: ( ${finalBolt11.substring(0, 15)}... )`);
+      }
+
+      if (source === 'spark') {
+        setStatusText("Paying Invoice...");
+        if (!sparkWallet) throw new Error("Spark wallet not initialized");
+        const realBal = Number((await sparkWallet.getBalance()).balance) || 1000;
+        const dynamicFee = Math.max(10, Math.floor(realBal - parsedAmount));
+        const res = await sparkWallet.payLightningInvoice({ invoice: finalBolt11, maxFeeSats: dynamicFee });
+        await addTransaction('outgoing', parsedAmount, 'SAT');
+        setSuccessPreimage(res.preimage || "Network success");
+      } else {
+        setStatusText("Fetching Atomiq Quote...");
+        if (!sparkWallet || !solanaKeypair) throw new Error("Bridge components missing");
+        
+        const requestAsset = source === 'usdc' ? 'USDC' : 'SOL';
+        const { swap, solanaSigner } = await getAtomiqQuote(solanaKeypair, finalBolt11, parsedAmount, requestAsset);
+        
+        setQuoteData({ swap, solanaSigner, finalBolt11, parsedAmount, sourceAsset: requestAsset });
+        setQuoteTimer(30);
+      }
+  };
+
+  const executeEidasPayment = async () => {
+    if (!pendingEidasInfo) return;
+    setLoading(true);
+    setStatusText("Signing eIDAS Data...");
+    try {
+      const { lnurlpInfo, amountToPay } = pendingEidasInfo;
+      const payerData = await generateEidasPayerData(solanaKeypair);
+      
+      setStatusText("Fetching Invoice...");
+      const finalBolt11 = await fetchInvoiceFromLNURLP(lnurlpInfo.callback, amountToPay, payerData);
+      
+      await executePaymentWithBolt11(finalBolt11, amountToPay);
+    } catch (e: any) {
+      let friendlyMsg = e.message || "eIDAS Execution failed.";
+      Alert.alert("eIDAS Failed", friendlyMsg);
+      setLoading(false);
+      setStatusText('Execute Payload');
+      setPendingEidasInfo(null);
+    }
+  };
+
   const handleCalculateOrSend = async () => {
     if (!destination.trim()) {
       Alert.alert("Error", "Enter a BOLT-11 invoice or Lightning Address.");
@@ -169,7 +221,10 @@ export default function SendScreen() {
             }
          }
          if (lnurlpInfo.compliance?.isSubjectToTravelRule && lnurlpInfo.payerData?.compliance?.mandatory) {
-            throw new Error("eIDAS Identity Verification (Travel Rule) is required by the receiver, but Phase 4 is not yet implemented.");
+            setPendingEidasInfo({ lnurlpInfo, amountToPay });
+            setLoading(false);
+            setStatusText('Execute Payload');
+            return;
          }
          finalBolt11 = await fetchInvoiceFromLNURLP(lnurlpInfo.callback, amountToPay);
       } else if (cleanInput.startsWith('lnurl1')) {
@@ -184,39 +239,15 @@ export default function SendScreen() {
             }
          }
          if (lnurlpInfo.compliance?.isSubjectToTravelRule && lnurlpInfo.payerData?.compliance?.mandatory) {
-            throw new Error("eIDAS Identity Verification (Travel Rule) is required by the receiver, but Phase 4 is not yet implemented.");
+            setPendingEidasInfo({ lnurlpInfo, amountToPay });
+            setLoading(false);
+            setStatusText('Execute Payload');
+            return;
          }
          finalBolt11 = await fetchInvoiceFromLNURLP(lnurlpInfo.callback, amountToPay);
       }
       
-      // Hunt for exact valid L2 prefix to truncate any remaining URI dirt from the finalized payload
-      const prefixMatch = finalBolt11.match(/(lnbc|lntb|lnsb|lnbcrt)/);
-      if (prefixMatch && !finalBolt11.startsWith(prefixMatch[1])) {
-         finalBolt11 = finalBolt11.substring(finalBolt11.indexOf(prefixMatch[1]));
-      }
-
-      if (!prefixMatch) {
-         throw new Error(`The scanned code is not a valid Lightning invoice. Found: ( ${finalBolt11.substring(0, 15)}... )`);
-      }
-
-      if (source === 'spark') {
-        setStatusText("Paying Invoice...");
-        if (!sparkWallet) throw new Error("Spark wallet not initialized");
-        const realBal = Number((await sparkWallet.getBalance()).balance) || 1000;
-        const dynamicFee = Math.max(10, Math.floor(realBal - parsedAmount));
-        const res = await sparkWallet.payLightningInvoice({ invoice: finalBolt11, maxFeeSats: dynamicFee });
-        await addTransaction('outgoing', parsedAmount, 'SAT');
-        setSuccessPreimage(res.preimage || "Network success");
-      } else {
-        setStatusText("Fetching Atomiq Quote...");
-        if (!sparkWallet || !solanaKeypair) throw new Error("Bridge components missing");
-        
-        const requestAsset = source === 'usdc' ? 'USDC' : 'SOL';
-        const { swap, solanaSigner } = await getAtomiqQuote(solanaKeypair, finalBolt11, parsedAmount, requestAsset);
-        
-        setQuoteData({ swap, solanaSigner, finalBolt11, parsedAmount, sourceAsset: requestAsset });
-        setQuoteTimer(30);
-      }
+      await executePaymentWithBolt11(finalBolt11, parsedAmount);
     } catch (e: any) {
       let friendlyMsg = e.message || "Execution failed.";
       if (friendlyMsg.includes("Total target amount exceeds available balance")) {
@@ -305,7 +336,17 @@ export default function SendScreen() {
     setInputValue('');
     setOcpData(null);
     setSelectedOcpOption(null);
+    setPendingEidasInfo(null);
   };
+
+  useFocusEffect(
+    useCallback(() => {
+      // Return a cleanup function that runs when the screen loses focus (user switches tabs)
+      return () => {
+        resetState();
+      };
+    }, [])
+  );
 
   if (successPreimage) {
      return (
@@ -324,6 +365,44 @@ export default function SendScreen() {
          </TouchableOpacity>
        </View>
      );
+  }
+
+  if (pendingEidasInfo) {
+    return (
+       <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+         <Ionicons name="id-card-outline" size={80} color={isNfcScanning ? "#6b5cc3" : "#ffb000"} style={{ marginBottom: 24 }} />
+         <Text style={[styles.quoteTitle, { textAlign: 'center' }]}>eIDAS Verification</Text>
+         <Text style={[styles.quoteSubtitle, { textAlign: 'center', marginBottom: 40 }]}>The merchant requires Travel Rule compliance data. Please scan your eIDAS ID card.</Text>
+         
+         {isNfcScanning ? (
+            <View style={{ alignItems: 'center', marginTop: 20 }}>
+               <ActivityIndicator size="large" color="#6b5cc3" />
+               <Text style={{ color: '#fff', marginTop: 16, fontSize: 16, fontWeight: 'bold' }}>Reading NFC Chip...</Text>
+            </View>
+         ) : (
+            <TouchableOpacity style={[styles.button, { backgroundColor: '#6b5cc3', width: '100%' }]} onPress={() => {
+               setIsNfcScanning(true);
+               Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+               setTimeout(() => {
+                  Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                  setIsNfcScanning(false);
+                  executeEidasPayment();
+               }, 2000);
+            }} disabled={loading}>
+               <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center' }}>
+                  <Ionicons name="wifi-outline" size={24} color="#fff" style={{ marginRight: 8, transform: [{rotate: '90deg'}] }} />
+                  <Text style={styles.buttonText}>Tap ID Card</Text>
+               </View>
+            </TouchableOpacity>
+         )}
+
+         {!isNfcScanning && (
+            <TouchableOpacity style={{ alignItems: 'center', marginTop: 24 }} onPress={() => setPendingEidasInfo(null)}>
+               <Text style={{ color: '#ff4444', fontWeight: 'bold' }}>Cancel Payment</Text>
+            </TouchableOpacity>
+         )}
+       </View>
+    );
   }
 
   if (quoteData) {

@@ -1,0 +1,108 @@
+const http = require('http');
+const { bech32 } = require('bech32');
+
+const PORT = 4444;
+
+function encodeUrlToLNURL(url) {
+  const words = bech32.toWords(Buffer.from(url, 'utf8'));
+  return bech32.encode('lnurl', words, 2000);
+}
+
+const server = http.createServer(async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Content-Type', 'application/json');
+
+  const url = new URL(req.url, `http://${req.headers.host}`);
+
+  if (url.pathname === '/lnurl-eidas') {
+    console.log("[eIDAS Server] LNURL Request empfangen!");
+    
+    // Wir simulieren hier eine Börse oder Bank, die eIDAS Compliance (Travel Rule) verlangt
+    res.writeHead(200);
+    res.end(JSON.stringify({
+      callback: `http://${req.headers.host}/lnurl-eidas/callback`,
+      maxSendable: 10000000,
+      minSendable: 1000,
+      metadata: "[[\"text/plain\", \"Test eIDAS Payment\"]]",
+      tag: "payRequest",
+      
+      // Das sind die entscheidenden Felder, die `send.tsx` abfragt:
+      compliance: {
+        isSubjectToTravelRule: true
+      },
+      payerData: {
+        compliance: {
+          mandatory: true
+        }
+      }
+    }));
+  } else if (url.pathname === '/lnurl-eidas/callback') {
+    console.log("[eIDAS Server] Execution Callback empfangen!");
+    
+    const payerDataRaw = url.searchParams.get('payerdata');
+    if (payerDataRaw) {
+      console.log("-> Payer Data empfangen:", payerDataRaw);
+      
+      // Um eine ECHTE Zahlung für die Demo zu ermöglichen, holen wir uns hier live
+      // eine echte 1-Sat Invoice von einem öffentlichen Service (z.B. Alby)
+      const https = require('https');
+      https.get('https://getalby.com/lnurlp/hello/callback?amount=1000', (albyRes) => {
+        let data = '';
+        albyRes.on('data', chunk => { data += chunk; });
+        albyRes.on('end', () => {
+          try {
+            const albyData = JSON.parse(data);
+            if (albyData.pr) {
+               res.writeHead(200);
+               res.end(JSON.stringify({ pr: albyData.pr }));
+               console.log("-> Echte Invoice von Alby geladen und an App gesendet!");
+            } else {
+               throw new Error("Keine Invoice von Alby erhalten: " + data);
+            }
+          } catch (err) {
+            console.error("Fehler beim Parsen der echten Invoice:", err.message);
+            res.writeHead(200);
+            res.end(JSON.stringify({ pr: "lnbc1p....." }));
+          }
+        });
+      }).on('error', (err) => {
+        console.error("Netzwerkfehler beim Laden der echten Invoice:", err.message);
+        res.writeHead(200);
+        res.end(JSON.stringify({ pr: "lnbc1p....." }));
+      });
+    } else {
+      console.log("-> Fehlende Payer Data!");
+      res.writeHead(200);
+      res.end(JSON.stringify({
+        status: "ERROR",
+        reason: "Missing eIDAS Travel Rule data!" 
+      }));
+    }
+  } else {
+    res.writeHead(404);
+    res.end(JSON.stringify({ error: "Not found" }));
+  }
+});
+
+server.listen(PORT, '0.0.0.0', () => {
+  const { networkInterfaces } = require('os');
+  const nets = networkInterfaces();
+  let localIp = '127.0.0.1';
+  for (const name of Object.keys(nets)) {
+    for (const net of nets[name]) {
+      if (net.family === 'IPv4' && !net.internal) {
+        localIp = net.address;
+      }
+    }
+  }
+
+  const apiUrl = `http://${localIp}:${PORT}/lnurl-eidas`;
+  const encodedLnurl = encodeUrlToLNURL(apiUrl);
+  
+  console.log("=========================================");
+  console.log(`eIDAS / Travel Rule Test-Server läuft auf Port ${PORT}`);
+  console.log("=========================================");
+  console.log("1. Kopiere folgenden LNURL-String in das 'Destination' Feld:");
+  console.log("\n" + encodedLnurl + "\n");
+  console.log("Scanne oder füge diesen String in deine App ein. Die App sollte nun den eIDAS Fehler werfen, weil die Phase 4 fehlt!");
+});

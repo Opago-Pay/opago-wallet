@@ -52,6 +52,10 @@ export async function fetchOcpOptions(apiUrl: string): Promise<OcpResponse> {
 
   // The Opago POS API / OCP standard should return an array of transferAmounts
   // Example: { fiatAmount: 4.50, transferAmounts: [...] }
+  if (!data.transferAmounts || !Array.isArray(data.transferAmounts)) {
+     throw new Error("Not a valid OCP response, likely a standard LNURL payload.");
+  }
+
   return data as OcpResponse;
 }
 

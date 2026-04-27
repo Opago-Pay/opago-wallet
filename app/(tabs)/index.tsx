@@ -1,9 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { View, Text, StyleSheet, ScrollView, RefreshControl, TouchableOpacity, LayoutAnimation } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
+import Animated, { FadeInUp } from 'react-native-reanimated';
 import { useWalletAuth, getGlobalSparkWallet, getGlobalWalletReady } from '@/hooks/useWalletAuth';
 import { SparkWallet } from '@/lib/spark';
 import { useExchangeRates } from '@/hooks/useExchangeRates';
@@ -176,11 +177,20 @@ export default function HomeScreen() {
     }
   };
 
-  useEffect(() => {
-    if (walletReady) {
-      fetchBalancesAndTxs();
-    }
-  }, [walletReady]);
+  useFocusEffect(
+    useCallback(() => {
+      if (walletReady) {
+        fetchBalancesAndTxs();
+        
+        // Also fetch again after 2.5 seconds to catch delayed L2 HTLC settlements
+        const timeout = setTimeout(() => {
+           fetchBalancesAndTxs();
+        }, 2500);
+        
+        return () => clearTimeout(timeout);
+      }
+    }, [walletReady])
+  );
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -207,16 +217,16 @@ export default function HomeScreen() {
         <Image source={require('@/assets/images/logo_new.svg')} style={{ width: 36, height: 36 }} contentFit="contain" />
       </View>
 
-      <View style={[styles.card, { borderColor: '#ffb000', borderWidth: 1 }]}>
+      <Animated.View entering={FadeInUp.delay(100).springify().damping(14)} style={[styles.card, { borderColor: '#ffb000', borderWidth: 1 }]}>
         <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
            <Image source={{ uri: 'https://cryptologos.cc/logos/bitcoin-btc-logo.png' }} style={{ width: 24, height: 24, marginRight: 8 }} />
            <Text style={[styles.cardHeader, { marginBottom: 0 }]}>Lightning</Text>
         </View>
         <Text style={styles.assetValue}>{btcBalance.toLocaleString()} SAT</Text>
         <Text style={[styles.fiatFallback, { color: '#ffb000' }]}>≈ €{btcInEur}</Text>
-      </View>
+      </Animated.View>
 
-      <View style={[styles.card, { borderColor: '#14F195', borderWidth: 1 }]}>
+      <Animated.View entering={FadeInUp.delay(200).springify().damping(14)} style={[styles.card, { borderColor: '#14F195', borderWidth: 1 }]}>
         <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
            <Image source={{ uri: 'https://cryptologos.cc/logos/solana-sol-logo.png' }} style={{ width: 24, height: 24, marginRight: 8 }} />
            <Text style={[styles.cardHeader, { marginBottom: 0 }]}>Solana</Text>
@@ -233,21 +243,21 @@ export default function HomeScreen() {
         </View>
 
         <Text style={[styles.addressLabel, { color: '#14F195' }]}>{solanaAddress ? `${solanaAddress.slice(0, 4)}...${solanaAddress.slice(-4)}` : 'Loading...'}</Text>
-      </View>
+      </Animated.View>
 
       <View style={styles.txHeader}>
         <Text style={styles.txTitle}>Recent Transactions</Text>
       </View>
 
       {transactions.length === 0 ? (
-        <View style={{ alignItems: 'center', marginTop: 40, marginBottom: 20 }}>
+        <Animated.View entering={FadeInUp.delay(300).springify().damping(14)} style={{ alignItems: 'center', marginTop: 40, marginBottom: 20 }}>
             <Ionicons name="receipt-outline" size={48} color="rgba(255,255,255,0.1)" />
             <Text style={{ color: '#8f8f9d', marginTop: 12, fontSize: 16, fontWeight: '600' }}>No transactions yet</Text>
             <Text style={{ color: '#666', marginTop: 4, fontSize: 13, textAlign: 'center', paddingHorizontal: 40 }}>Deposit funds via Lightning or Solana base-layer to see activity here.</Text>
-        </View>
+        </Animated.View>
       ) : (
-        transactions.map((tx) => (
-          <View key={tx.id} style={styles.txCard}>
+        transactions.map((tx, index) => (
+          <Animated.View key={tx.id} entering={FadeInUp.delay(300 + index * 50).springify().damping(14)} style={styles.txCard}>
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
               <Image 
                 source={{ uri: tx.asset === 'SOL' ? 'https://cryptologos.cc/logos/solana-sol-logo.png' : (tx.asset === 'USDC' ? 'https://cryptologos.cc/logos/usd-coin-usdc-logo.png' : 'https://cryptologos.cc/logos/bitcoin-btc-logo.png') }} 
@@ -256,6 +266,9 @@ export default function HomeScreen() {
               <View>
                 <Text style={styles.txType}>{tx.type === 'incoming' ? 'Received' : 'Sent'} {tx.asset}</Text>
                 <Text style={styles.txDate}>{new Date(tx.timestamp).toLocaleString()}</Text>
+                <View style={[styles.statusBadge, { backgroundColor: tx.type === 'incoming' ? 'rgba(20,241,149,0.1)' : 'rgba(255,255,255,0.05)' }]}>
+                   <Text style={[styles.statusText, { color: tx.type === 'incoming' ? '#14F195' : '#8f8f9d' }]}>Completed</Text>
+                </View>
               </View>
             </View>
             <View style={{ alignItems: 'flex-end' }}>
@@ -269,7 +282,7 @@ export default function HomeScreen() {
                 ≈ €{ tx.asset === 'SOL' ? (tx.amount * rates.solToEur).toFixed(2) : (tx.asset === 'USDC' ? (tx.amount * 0.92).toFixed(2) : ((tx.amount / 1e8) * rates.btcToEur).toFixed(2)) }
               </Text>
             </View>
-          </View>
+          </Animated.View>
         ))
       )}
 
@@ -372,5 +385,17 @@ const styles = StyleSheet.create({
   txAmount: {
     fontSize: 16,
     fontWeight: '700',
+  },
+  statusBadge: {
+    marginTop: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 8,
+    alignSelf: 'flex-start',
+  },
+  statusText: {
+    fontSize: 10,
+    fontWeight: '700',
+    textTransform: 'uppercase',
   }
 });

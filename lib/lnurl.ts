@@ -53,12 +53,19 @@ export async function resolveLightningAddress(address: string): Promise<LNURLPRe
   }
 }
 
-export async function fetchInvoiceFromLNURLP(callbackUrl: string, amountSat: number): Promise<string> {
+export async function fetchInvoiceFromLNURLP(callbackUrl: string, amountSat: number, payerData?: any): Promise<string> {
   // LNURL uses millisatoshis
   const millisats = amountSat * 1000;
   // If the callback URL already has arguments, append with &
   const separator = callbackUrl.includes('?') ? '&' : '?';
-  const finalUrl = `${callbackUrl}${separator}amount=${millisats}`;
+  let finalUrl = `${callbackUrl}${separator}amount=${millisats}`;
+  
+  if (payerData) {
+    finalUrl += `&payerdata=${encodeURIComponent(JSON.stringify(payerData))}`;
+  }
+  
+  // Cache Buster anhängen, da Android agressiv zwischenspeichert
+  finalUrl += `&nonce=${Date.now()}`;
   
   try {
     const res = await fetch(finalUrl);
@@ -70,4 +77,19 @@ export async function fetchInvoiceFromLNURLP(callbackUrl: string, amountSat: num
   } catch (error: any) {
     throw new Error("Failed to request invoice from LNURL callback: " + error.message);
   }
+}
+
+export async function generateEidasPayerData(solanaKeypair: any): Promise<any> {
+  // Mock the Travel Rule data payload. 
+  // For a real app, this would fetch KYC info and sign it securely.
+  const timestamp = Date.now().toString();
+  
+  return {
+    name: "Opago Hackathon User",
+    identifier: solanaKeypair ? solanaKeypair.publicKey.toBase58() : "unknown_pubkey",
+    compliance: {
+      kycStatus: "verified",
+      signature: "mock_signature_for_eidas_travel_rule_" + timestamp
+    }
+  };
 }

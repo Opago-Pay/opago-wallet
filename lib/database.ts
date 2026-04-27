@@ -1,4 +1,4 @@
-import { getSecureItem, setSecureItem } from './storage';
+import * as SQLite from 'expo-sqlite';
 
 export interface Transaction {
   id: number;
@@ -9,48 +9,53 @@ export interface Transaction {
   timestamp: string;
 }
 
-const TX_KEY = 'opago_transactions_history';
+let db: SQLite.SQLiteDatabase | null = null;
 
 export async function initDatabase() {
-  // Replaced SQLite with JSON Storage to eliminate Engine Crashes
+  try {
+    db = await SQLite.openDatabaseAsync('opago.db');
+    await db.execAsync(`
+      CREATE TABLE IF NOT EXISTS transactions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        type TEXT NOT NULL,
+        amount REAL NOT NULL,
+        asset TEXT NOT NULL,
+        status TEXT NOT NULL,
+        timestamp TEXT NOT NULL
+      );
+    `);
+    console.log("Database initialized");
+  } catch (e) {
+    console.error("Failed to init database", e);
+  }
 }
 
 export async function wipeTransactions() {
+  if (!db) return;
   try {
-    await setSecureItem(TX_KEY, JSON.stringify([]));
+    await db.execAsync('DELETE FROM transactions');
   } catch (e) {
     console.error("Failed to wipe", e);
   }
 }
 
-export async function addTransaction(type: 'incoming' | 'outgoing', amount: number, asset: 'SAT' | 'SOL' | 'EUR') {
+export async function addTransaction(type: 'incoming' | 'outgoing', amount: number, asset: 'SAT' | 'SOL' | 'EUR' | 'USDC' | string) {
+  if (!db) await initDatabase();
   try {
-    const data = await getSecureItem(TX_KEY);
-    const txs: Transaction[] = data ? JSON.parse(data) : [];
-    
-    const newTx: Transaction = {
-      id: Date.now(),
-      type,
-      amount,
-      asset,
-      status: 'completed',
-      timestamp: new Date().toISOString()
-    };
-    
-    // Add to top and truncate
-    txs.unshift(newTx);
-    if (txs.length > 50) txs.pop();
-    
-    await setSecureItem(TX_KEY, JSON.stringify(txs));
+    await db!.runAsync(
+      'INSERT INTO transactions (type, amount, asset, status, timestamp) VALUES (?, ?, ?, ?, ?)',
+      [type, amount, asset, 'completed', new Date().toISOString()]
+    );
   } catch (e) {
     console.error("Failed to add tx", e);
   }
 }
 
 export async function getTransactions(): Promise<Transaction[]> {
+  if (!db) await initDatabase();
   try {
-    const data = await getSecureItem(TX_KEY);
-    return data ? JSON.parse(data) : [];
+    const allRows = await db!.getAllAsync<Transaction>('SELECT * FROM transactions ORDER BY id DESC LIMIT 50');
+    return allRows;
   } catch (e) {
     console.error("Failed to get txs", e);
     return [];

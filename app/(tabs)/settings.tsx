@@ -1,7 +1,7 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { Image } from 'expo-image';
-import { deleteSecureItem } from '../../lib/storage';
+import { deleteSecureItem, getSecureItem } from '../../lib/storage';
 import { useRouter } from 'expo-router';
 import { wipeWalletGlobally } from '@/hooks/useWalletAuth';
 import { usePrivy } from '@privy-io/expo';
@@ -9,6 +9,12 @@ import { usePrivy } from '@privy-io/expo';
 export default function SettingsScreen() {
   const router = useRouter();
   const { logout } = usePrivy();
+  const [mnemonic, setMnemonic] = useState<string | null>(null);
+  const [isRevealed, setIsRevealed] = useState(false);
+
+  useEffect(() => {
+    getSecureItem('opago_wallet_mnemonic').then(setMnemonic);
+  }, []);
 
   const handleReset = async () => {
     await wipeWalletGlobally();
@@ -24,6 +30,27 @@ export default function SettingsScreen() {
         <Image source={require('@/assets/images/logo_new.svg')} style={{ width: 36, height: 36 }} contentFit="contain" />
       </View>
       <Text style={styles.subtitle}>Manage your cross-chain wallet keys.</Text>
+
+      {mnemonic && (
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Recovery Phrase</Text>
+          <Text style={styles.sectionSubtitle}>This phrase is the master key to your funds. Never share it with anyone.</Text>
+          
+          <TouchableOpacity 
+             style={styles.mnemonicBox} 
+             onPress={() => setIsRevealed(!isRevealed)}
+          >
+            <Text style={[styles.mnemonicText, !isRevealed && styles.blurredText]}>
+              {isRevealed ? mnemonic : "•••••••• •••••••• •••••••• •••••••• •••••••• •••••••• •••••••• •••••••• •••••••• •••••••• •••••••• ••••••••"}
+            </Text>
+            {!isRevealed && (
+              <View style={styles.overlayTextContainer}>
+                <Text style={styles.overlayText}>Tap to Reveal</Text>
+              </View>
+            )}
+          </TouchableOpacity>
+        </View>
+      )}
 
       <View style={styles.section}>
         <TouchableOpacity style={styles.dangerButton} onPress={handleReset}>
@@ -60,6 +87,46 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderColor: 'rgba(255,255,255,0.1)',
     paddingTop: 40,
+  },
+  sectionTitle: {
+    color: '#fff',
+    fontSize: 20,
+    fontWeight: '700',
+    marginBottom: 8,
+  },
+  sectionSubtitle: {
+    color: '#8f8f9d',
+    marginBottom: 16,
+  },
+  mnemonicBox: {
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    padding: 24,
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+    minHeight: 120,
+  },
+  mnemonicText: {
+    color: '#fff',
+    fontSize: 18,
+    lineHeight: 28,
+    fontFamily: 'monospace',
+    textAlign: 'center',
+    letterSpacing: 1,
+  },
+  blurredText: {
+    opacity: 0.3,
+  },
+  overlayTextContainer: {
+    position: 'absolute',
+    top: 0, bottom: 0, left: 0, right: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  overlayText: {
+    color: '#ffb000',
+    fontWeight: '700',
+    fontSize: 16,
   },
   dangerButton: {
     backgroundColor: 'rgba(255, 60, 60, 0.1)',

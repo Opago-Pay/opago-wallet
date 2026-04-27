@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, TextInput, Switch, Alert, LayoutAnimation } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { Image } from 'expo-image';
@@ -8,7 +8,7 @@ import QRCode from 'react-native-qrcode-svg';
 import { useExchangeRates } from '@/hooks/useExchangeRates';
 import { addTransaction } from '@/lib/database';
 import * as Notifications from 'expo-notifications';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import * as Clipboard from 'expo-clipboard';
 import { Connection, PublicKey } from '@solana/web3.js';
 
@@ -157,6 +157,14 @@ export default function ReceiveScreen() {
     setInvoice(null);
     setIsPaid(false);
   };
+
+  useFocusEffect(
+    useCallback(() => {
+      return () => {
+        resetState();
+      };
+    }, [])
+  );
 
   const copyToClipboard = async (text: string, label: string) => {
     await Clipboard.setStringAsync(text);
