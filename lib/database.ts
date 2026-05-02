@@ -10,24 +10,32 @@ export interface Transaction {
 }
 
 let db: SQLite.SQLiteDatabase | null = null;
+let initPromise: Promise<void> | null = null;
 
 export async function initDatabase() {
-  try {
-    db = await SQLite.openDatabaseAsync('opago.db');
-    await db.execAsync(`
-      CREATE TABLE IF NOT EXISTS transactions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        type TEXT NOT NULL,
-        amount REAL NOT NULL,
-        asset TEXT NOT NULL,
-        status TEXT NOT NULL,
-        timestamp TEXT NOT NULL
-      );
-    `);
-    console.log("Database initialized");
-  } catch (e) {
-    console.error("Failed to init database", e);
-  }
+  if (db) return;
+  if (initPromise) return initPromise;
+
+  initPromise = (async () => {
+    try {
+      db = await SQLite.openDatabaseAsync('opago.db');
+      await db.execAsync(`
+        CREATE TABLE IF NOT EXISTS transactions (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          type TEXT NOT NULL,
+          amount REAL NOT NULL,
+          asset TEXT NOT NULL,
+          status TEXT NOT NULL,
+          timestamp TEXT NOT NULL
+        );
+      `);
+      console.log("Database initialized");
+    } catch (e) {
+      console.error("Failed to init database", e);
+    }
+  })();
+  
+  return initPromise;
 }
 
 export async function wipeTransactions() {

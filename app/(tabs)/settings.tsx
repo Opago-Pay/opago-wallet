@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { Image } from 'expo-image';
 import { deleteSecureItem, getSecureItem } from '../../lib/storage';
 import { useRouter } from 'expo-router';
@@ -16,11 +16,28 @@ export default function SettingsScreen() {
     getSecureItem('opago_wallet_mnemonic').then(setMnemonic);
   }, []);
 
+  const [isDeleting, setIsDeleting] = useState(false);
+
   const handleReset = async () => {
-    await wipeWalletGlobally();
-    if (logout) await logout();
-    // Force a hard reload basically by jumping to Login
-    router.replace('/(auth)/login');
+    setIsDeleting(true);
+    try {
+      await wipeWalletGlobally();
+      if (logout) {
+        try {
+          // Timeout von 2 Sekunden, falls Privy sich aufhängt!
+          await Promise.race([
+            logout(),
+            new Promise((_, reject) => setTimeout(() => reject(new Error("Privy logout timeout")), 2000))
+          ]);
+        } catch (e) {
+          console.warn("Privy logout failed or timed out, continuing wipe...", e);
+        }
+      }
+    } finally {
+      setIsDeleting(false);
+      // Force a hard reload basically by jumping to Login
+      router.replace('/(auth)/login');
+    }
   };
 
   return (
@@ -53,8 +70,16 @@ export default function SettingsScreen() {
       )}
 
       <View style={styles.section}>
-        <TouchableOpacity style={styles.dangerButton} onPress={handleReset}>
-          <Text style={styles.dangerButtonText}>Delete Wallet</Text>
+        <TouchableOpacity 
+          style={[styles.dangerButton, isDeleting && { opacity: 0.5 }]} 
+          onPress={handleReset}
+          disabled={isDeleting}
+        >
+          {isDeleting ? (
+            <ActivityIndicator color="#ff4444" />
+          ) : (
+            <Text style={styles.dangerButtonText}>Delete Wallet</Text>
+          )}
         </TouchableOpacity>
       </View>
     </View>

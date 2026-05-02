@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, ActivityIndicator, Alert, Platform, LayoutAnimation, AppState, Linking } from 'react-native';
+import { View, Text, StyleSheet, TextInput, TouchableOpacity, ActivityIndicator, Alert, Platform, LayoutAnimation, AppState } from 'react-native';
+import * as Linking from 'expo-linking';
 import * as Haptics from 'expo-haptics';
 import { Image } from 'expo-image';
 import { useWalletAuth } from '@/hooks/useWalletAuth';
@@ -45,6 +46,7 @@ export default function SendScreen() {
   const [pendingEidasInfo, setPendingEidasInfo] = useState<{lnurlpInfo: any, amountToPay: number} | null>(null);
   const [isNfcScanning, setIsNfcScanning] = useState(false);
   const isWaitingForEid = useRef(false);
+  const [eidSessionId, setEidSessionId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!walletReady) {
@@ -148,12 +150,12 @@ export default function SendScreen() {
   };
 
   const executeEidasPayment = async () => {
-    if (!pendingEidasInfo) return;
+    if (!pendingEidasInfo || !eidSessionId) return;
     setLoading(true);
     setStatusText("Signing eIDAS Data...");
     try {
       const { lnurlpInfo, amountToPay } = pendingEidasInfo;
-      const payerData = await generateEidasPayerData(solanaKeypair);
+      const payerData = await generateEidasPayerData(eidSessionId);
       
       setStatusText("Fetching Invoice...");
       const finalBolt11 = await fetchInvoiceFromLNURLP(lnurlpInfo.callback, amountToPay, payerData);
@@ -169,6 +171,9 @@ export default function SendScreen() {
   };
 
   useEffect(() => {
+    // Da wir noch keinen eigenen eID-Server für den Deep-Link haben,
+    // nutzen wir den AppState, um zu erkennen, wann du vom Browser/der AusweisApp
+    // zurück in die Opago Wallet wechselst.
     const subscription = AppState.addEventListener('change', nextAppState => {
       if (nextAppState === 'active' && isWaitingForEid.current) {
          isWaitingForEid.current = false;
@@ -181,10 +186,24 @@ export default function SendScreen() {
          }, 1500);
       }
     });
+
+    // Deep-Link Fallback, falls wir später den eigenen Server haben
+    const handleDeepLink = (event: { url: string }) => {
+      let data = Linking.parse(event.url);
+      if (data.path === 'eid-success' || event.url.includes('eid-success')) {
+         if (isWaitingForEid.current) {
+            isWaitingForEid.current = false;
+            executeEidasPayment();
+         }
+      }
+    };
+    const linkSub = Linking.addEventListener('url', handleDeepLink);
+
     return () => {
       subscription.remove();
+      linkSub.remove();
     };
-  }, [pendingEidasInfo, solanaKeypair]);
+  }, [pendingEidasInfo, solanaKeypair, eidSessionId]);
 
   const handleCalculateOrSend = async () => {
     if (!destination.trim()) {
@@ -333,6 +352,25 @@ export default function SendScreen() {
     );
   };
 
+  const resetState = () => {
+    setSuccessPreimage(null);
+    setDestination('');
+    setInputValue('');
+    setOcpData(null);
+    setSelectedOcpOption(null);
+    setPendingEidasInfo(null);
+    setEidSessionId(null);
+  };
+
+  useFocusEffect(
+    useCallback(() => {
+      // Return a cleanup function that runs when the screen loses focus (user switches tabs)
+      return () => {
+        resetState();
+      };
+    }, [])
+  );
+
   if (isScanning) {
     return (
       <View style={{ flex: 1, backgroundColor: '#000' }}>
@@ -355,23 +393,7 @@ export default function SendScreen() {
     );
   }
 
-  const resetState = () => {
-    setSuccessPreimage(null);
-    setDestination('');
-    setInputValue('');
-    setOcpData(null);
-    setSelectedOcpOption(null);
-    setPendingEidasInfo(null);
-  };
 
-  useFocusEffect(
-    useCallback(() => {
-      // Return a cleanup function that runs when the screen loses focus (user switches tabs)
-      return () => {
-        resetState();
-      };
-    }, [])
-  );
 
   if (successPreimage) {
      return (
@@ -412,13 +434,53 @@ export default function SendScreen() {
                      isWaitingForEid.current = false;
                      setIsNfcScanning(false);
                   }
-               }, 60000); // Reset nach 1 Minute
+               }, 300000); // Reset nach 5 Minuten (Pitch Safety)
 
                isWaitingForEid.current = true;
-               // Offizielles eID-Scheme nach TR-03124
-               Linking.openURL('eid://127.0.0.1:24727/eID-Client?tcTokenURL=https%3A%2F%2Ftest.governikus-eid.de%2FAusweisAuskunft%2FWebServiceRequesterServlet').catch(err => {
-                  Alert.alert("AusweisApp Missing", "Please install the official AusweisApp from the Play Store/App Store to use real eID.");
+               
+               // 1. Backend anpingen, um eID-Session zu starten (liefert tcTokenURL + Session ID)
+               const backendUrl = process.env.EXPO_PUBLIC_EID_BACKEND_URL || 'http://10.0.2.2:5555';
+               fetch(`${backendUrl}/api/eid/session`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    solanaPubkey: solanaKeypair ? solanaKeypair.publicKey.toBase58() : 'unknown',
+                    transactionInfo: `Send ${pendingEidasInfo.amountToPay} SATS to ${pendingEidasInfo.lnurlpInfo.callback}`
+                  })
+               })
+               .then(res => res.json())
+               .then(data => {
+                  if (data.tcTokenURL && data.sessionId) {
+                     setEidSessionId(data.sessionId);
+                     console.log("eID Session started:", data.sessionId);
+                     
+                     // 2. AusweisApp auf dem HANDY triggern!
+                     if (Platform.OS === 'android') {
+                        const IntentLauncher = require('expo-intent-launcher');
+                        const strictEidUrl = `eid://127.0.0.1:24727/eID-Client?tcTokenURL=${encodeURIComponent(data.tcTokenURL)}`;
+                        
+                        return IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
+                           data: strictEidUrl,
+                           category: 'android.intent.category.BROWSABLE'
+                        }).catch(err => {
+                           throw new Error("Konnte AusweisApp nicht starten: " + err.message);
+                        });
+                     } else {
+                        // iOS fallback
+                        const intentUrl = data.tcTokenURL.replace('https://', 'eid://');
+                        return Linking.openURL(intentUrl);
+                     }
+                  } else {
+                     throw new Error("Invalid response from Opago eID Backend");
+                  }
+               })
+               .catch(err => {
+                  Alert.alert(
+                     "AusweisApp Connection Failed", 
+                     "Konnte die AusweisApp nicht öffnen. Ist sie installiert?\nError: " + err.message
+                  );
                   isWaitingForEid.current = false;
+                  setIsNfcScanning(false);
                });
             }} disabled={loading}>
                <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center' }}>

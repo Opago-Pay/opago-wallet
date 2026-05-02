@@ -79,17 +79,25 @@ export async function fetchInvoiceFromLNURLP(callbackUrl: string, amountSat: num
   }
 }
 
-export async function generateEidasPayerData(solanaKeypair: any): Promise<any> {
-  // Mock the Travel Rule data payload. 
-  // For a real app, this would fetch KYC info and sign it securely.
-  const timestamp = Date.now().toString();
-  
-  return {
-    name: "Opago Hackathon User",
-    identifier: solanaKeypair ? solanaKeypair.publicKey.toBase58() : "unknown_pubkey",
-    compliance: {
-      kycStatus: "verified",
-      signature: "mock_signature_for_eidas_travel_rule_" + timestamp
+export async function generateEidasPayerData(sessionId: string): Promise<any> {
+  // Poll the Opago Backend for the cryptographically signed eIDAS payload
+  let attempts = 0;
+  while (attempts < 15) {
+    try {
+      const backendUrl = process.env.EXPO_PUBLIC_EID_BACKEND_URL || 'http://10.0.2.2:5555';
+      const res = await fetch(`${backendUrl}/api/eid/session/${sessionId}/status`);
+      const data = await res.json();
+      
+      if (data.status === 'SUCCESS' && data.payerData) {
+        return data.payerData;
+      }
+    } catch (error: any) {
+      console.warn("Polling eID backend failed:", error.message);
     }
-  };
+    // Wait 2 seconds before next poll
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    attempts++;
+  }
+  
+  throw new Error("eID verification timed out. Please try again.");
 }

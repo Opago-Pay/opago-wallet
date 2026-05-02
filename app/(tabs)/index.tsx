@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { View, Text, StyleSheet, ScrollView, RefreshControl, TouchableOpacity, LayoutAnimation } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, RefreshControl, TouchableOpacity, LayoutAnimation, Alert } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
 import { Image } from 'expo-image';
@@ -177,6 +177,20 @@ export default function HomeScreen() {
     }
   };
 
+  const prevSolBalance = React.useRef(solBalance);
+  
+  useEffect(() => {
+    if (prevSolBalance.current !== 0 && solBalance > prevSolBalance.current) {
+      const diff = solBalance - prevSolBalance.current;
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      Alert.alert(
+        "Deposit Received! 🎉",
+        `You just received ${diff.toLocaleString(undefined, { maximumFractionDigits: 4 })} SOL.`
+      );
+    }
+    prevSolBalance.current = solBalance;
+  }, [solBalance]);
+
   useFocusEffect(
     useCallback(() => {
       if (walletReady) {
@@ -186,10 +200,18 @@ export default function HomeScreen() {
         const timeout = setTimeout(() => {
            fetchBalancesAndTxs();
         }, 2500);
+
+        // Poll every 10 seconds to auto-detect incoming on-chain deposits without pull-to-refresh
+        const interval = setInterval(() => {
+           fetchBalancesAndTxs();
+        }, 10000);
         
-        return () => clearTimeout(timeout);
+        return () => {
+          clearTimeout(timeout);
+          clearInterval(interval);
+        };
       }
-    }, [walletReady])
+    }, [walletReady, solanaAddress])
   );
 
   const onRefresh = async () => {

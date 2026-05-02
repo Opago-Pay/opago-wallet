@@ -1,14 +1,16 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Dimensions } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Dimensions, TextInput, Alert } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useWalletAuth } from '@/hooks/useWalletAuth';
 import { useLoginWithOAuth } from '@privy-io/expo';
+import { validateMnemonic } from 'bip39';
+import { setSecureItem } from '@/lib/storage';
 
 const { width, height } = Dimensions.get('window');
 
 export default function LoginScreen() {
   const router = useRouter();
-  const { loadOrGenerateWallet, isInitializing, walletReady } = useWalletAuth();
+  const { loadOrGenerateWallet, isInitializing, walletReady, initStatus } = useWalletAuth();
   const [loggingIn, setLoggingIn] = useState(false);
 
   // Once the wallet is ready, navigate to tabs
@@ -20,6 +22,21 @@ export default function LoginScreen() {
 
   const handlePostAuth = async () => {
     setLoggingIn(true);
+    await loadOrGenerateWallet();
+    setLoggingIn(false);
+  };
+
+  const [isRestoring, setIsRestoring] = useState(false);
+  const [mnemonicInput, setMnemonicInput] = useState('');
+
+  const handleRestore = async () => {
+    const phrase = mnemonicInput.trim().toLowerCase();
+    if (!validateMnemonic(phrase)) {
+      Alert.alert("Invalid Phrase", "Please enter a valid 12 or 24-word recovery phrase.");
+      return;
+    }
+    setLoggingIn(true);
+    await setSecureItem('opago_wallet_mnemonic', phrase);
     await loadOrGenerateWallet();
     setLoggingIn(false);
   };
@@ -39,27 +56,72 @@ export default function LoginScreen() {
         <Text style={styles.subtitle}>Lightning • Solana • Identity</Text>
         
         <View style={styles.card}>
-          <Text style={styles.cardTitle}>Welcome Back</Text>
-          <Text style={styles.cardDesc}>Sign in to access your universal bridge.</Text>
-          
-          <TouchableOpacity 
-            style={[styles.button, styles.providerBtn]} 
-            onPress={() => loginOAuth({ provider: 'google' })} disabled={loggingIn || isInitializing}
-          >
-            <Text style={styles.providerIcon}>G</Text>
-            <Text style={styles.buttonText}>Continue with Google</Text>
-          </TouchableOpacity>
+          {isRestoring ? (
+            <>
+               <Text style={styles.cardTitle}>Restore Wallet</Text>
+               <Text style={styles.cardDesc}>Enter your 12-word recovery phrase separated by spaces.</Text>
+               
+               <TextInput 
+                 style={styles.input} 
+                 placeholder="e.g. abandon ability able..." 
+                 placeholderTextColor="#666"
+                 value={mnemonicInput} 
+                 onChangeText={setMnemonicInput} 
+                 autoCapitalize="none" 
+                 multiline
+               />
 
-          <TouchableOpacity 
-            style={[styles.button, styles.providerBtn]} 
-            onPress={() => handlePostAuth()} disabled={loggingIn || isInitializing}
-          >
-            <Text style={styles.providerIcon}>✉</Text>
-            <Text style={styles.buttonText}>Continue with Email</Text>
-          </TouchableOpacity>
+               <TouchableOpacity 
+                 style={[styles.button, styles.providerBtn, { backgroundColor: '#6b5cc3' }]} 
+                 onPress={handleRestore} disabled={loggingIn || isInitializing}
+               >
+                 <Text style={[styles.buttonText, { color: '#fff' }]}>Restore Now</Text>
+               </TouchableOpacity>
+
+               <TouchableOpacity 
+                 style={[styles.button, styles.providerBtn, { backgroundColor: 'transparent', borderWidth: 1, borderColor: '#333' }]} 
+                 onPress={() => setIsRestoring(false)} disabled={loggingIn || isInitializing}
+               >
+                 <Text style={styles.buttonText}>Cancel</Text>
+               </TouchableOpacity>
+            </>
+          ) : (
+            <>
+               <Text style={styles.cardTitle}>Create Wallet</Text>
+               <Text style={styles.cardDesc}>Create your new universal bridge wallet.</Text>
+               
+               <TouchableOpacity 
+                 style={[styles.button, styles.providerBtn]} 
+                 onPress={() => loginOAuth({ provider: 'google' })} disabled={loggingIn || isInitializing}
+               >
+                 <Text style={styles.providerIcon}>G</Text>
+                 <Text style={styles.buttonText}>Continue with Google</Text>
+               </TouchableOpacity>
+
+               <TouchableOpacity 
+                 style={[styles.button, styles.providerBtn]} 
+                 onPress={() => handlePostAuth()} disabled={loggingIn || isInitializing}
+               >
+                 <Text style={styles.providerIcon}>✉</Text>
+                 <Text style={styles.buttonText}>Continue with Email</Text>
+               </TouchableOpacity>
+
+               <TouchableOpacity 
+                 style={{ marginTop: 16, alignItems: 'center' }} 
+                 onPress={() => setIsRestoring(true)} disabled={loggingIn || isInitializing}
+               >
+                 <Text style={{ color: '#6b5cc3', fontWeight: 'bold' }}>Restore from Recovery Phrase</Text>
+               </TouchableOpacity>
+            </>
+          )}
 
           {(loggingIn || isInitializing) && (
-            <ActivityIndicator style={{marginTop: 16}} color="#ffb000" />
+            <View style={{marginTop: 24, alignItems: 'center'}}>
+               <ActivityIndicator color="#ffb000" size="large" />
+               <Text style={{color: '#a0a0ab', marginTop: 16, fontSize: 14, fontWeight: '600', textAlign: 'center'}}>
+                 {initStatus || 'Authenticating...'}
+               </Text>
+            </View>
           )}
         </View>
       </View>
@@ -172,5 +234,16 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: '700',
     color: '#ffffff',
+  },
+  input: { 
+    backgroundColor: '#1a1a1f', 
+    color: '#fff', 
+    fontSize: 16, 
+    padding: 16, 
+    borderRadius: 12, 
+    marginBottom: 20, 
+    minHeight: 80, 
+    borderWidth: 1, 
+    borderColor: 'rgba(255,255,255,0.1)' 
   },
 });

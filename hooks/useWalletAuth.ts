@@ -18,6 +18,8 @@ let globalWalletReady = false;
 let isInitializingGlobally = false;
 let initializationPromise: Promise<void> | null = null;
 
+let globalInitStatus = '';
+
 export async function wipeWalletGlobally() {
   await deleteSecureItem(MNEMONIC_STORE_KEY);
   globalSparkWallet = null;
@@ -25,6 +27,7 @@ export async function wipeWalletGlobally() {
   globalSolanaKeypair = null;
   globalWalletReady = false;
   initializationPromise = null;
+  globalInitStatus = '';
 }
 
 export const getGlobalSparkWallet = () => globalSparkWallet;
@@ -36,6 +39,11 @@ export function useWalletAuth() {
 
   const syncState = () => {
     setTick(t => t + 1);
+  };
+
+  const setStatus = (msg: string) => {
+    globalInitStatus = msg;
+    syncState();
   };
 
   const loadOrGenerateWallet = useCallback(async () => {
@@ -53,18 +61,21 @@ export function useWalletAuth() {
     initializationPromise = (async () => {
       try {
         isInitializingGlobally = true;
-        syncState();
+        setStatus('Initializing Secure Enclave...');
         
         let mnemonic = await getSecureItem(MNEMONIC_STORE_KEY);
         
         if (!mnemonic) {
+          setStatus('Generating new 12-word recovery phrase...');
           console.log("Generating new mnemonic...");
           mnemonic = generateMnemonic(128, (size) => Buffer.from(Crypto.getRandomBytes(size)));
           await setSecureItem(MNEMONIC_STORE_KEY, mnemonic);
         } else {
+          setStatus('Restoring wallet from secure storage...');
           console.log("Loaded mnemonic from secure store.");
         }
         
+        setStatus('Deriving Solana Keypair...');
         const seed = mnemonicToSeedSync(mnemonic);
         const derivationPath = "m/44'/501'/0'/0'";
         const hd = HDKey.fromMasterSeed(seed.toString('hex'));
@@ -76,6 +87,7 @@ export function useWalletAuth() {
         console.log("Derived Solana address:", globalSolanaAddress);
 
         try {
+          setStatus('Linking identity provider...');
           if (privy && 'importWallet' in privy) {
              (privy as any).importWallet({ privateKey: bs58.encode(derivedKeypair.secretKey), chainType: 'solana' });
           }
@@ -83,12 +95,15 @@ export function useWalletAuth() {
           console.log("Privy import failed or not available:", privyErr);
         }
         
+        setStatus('Booting Lightning Network node...');
         const spark = await initializeSparkWallet(mnemonic);
         globalSparkWallet = spark as any;
         
+        setStatus('Ready!');
         globalWalletReady = true;
       } catch (e) {
         console.error("Wallet init error", e);
+        setStatus('Error initializing wallet.');
       } finally {
         isInitializingGlobally = false;
         syncState();
@@ -101,6 +116,7 @@ export function useWalletAuth() {
 
   return {
     isInitializing: isInitializingGlobally,
+    initStatus: globalInitStatus,
     walletReady: globalWalletReady,
     sparkWallet: globalSparkWallet,
     solanaAddress: globalSolanaAddress,
