@@ -460,8 +460,7 @@ export default function SendScreen() {
                         const strictEidUrl = `eid://127.0.0.1:24727/eID-Client?tcTokenURL=${encodeURIComponent(data.tcTokenURL)}`;
                         
                         return IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
-                           data: strictEidUrl,
-                           category: 'android.intent.category.BROWSABLE'
+                           data: strictEidUrl
                         }).catch(err => {
                            throw new Error("Konnte AusweisApp nicht starten: " + err.message);
                         });
