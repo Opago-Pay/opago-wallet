@@ -11,7 +11,7 @@ import { resolveOcpUrl, fetchOcpOptions, fetchOcpExecutionPayload } from '@/lib/
 import { useRouter, useFocusEffect } from 'expo-router';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { Ionicons } from '@expo/vector-icons';
-import { Connection, PublicKey } from '@solana/web3.js';
+import { Connection, PublicKey, Transaction, SystemProgram } from '@solana/web3.js';
 
 const RATES = {
   EUR: 1350,   // 1 EUR = 1,350 SATS 
@@ -61,12 +61,12 @@ export default function SendScreen() {
             setBalances(b => ({ ...b, spark: settled + incoming }));
           }
           if (solanaKeypair) {
-             const connection = new globalThis.solanaWeb3.Connection("https://solana-rpc.publicnode.com");
+             const connection = new Connection("https://api.mainnet-beta.solana.com");
              const pubkey = solanaKeypair.publicKey;
              const solBal = await connection.getBalance(pubkey);
              setBalances(b => ({ ...b, sol: solBal / 1e9 }));
              
-             const USDC_MINT = new globalThis.solanaWeb3.PublicKey("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
+             const USDC_MINT = new PublicKey("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
              const tokenAccounts = await connection.getParsedTokenAccountsByOwner(pubkey, { mint: USDC_MINT });
              if (tokenAccounts.value.length > 0) {
                 const usdcAmount = tokenAccounts.value[0].account.data.parsed.info.tokenAmount.uiAmount || 0;
@@ -541,11 +541,11 @@ export default function SendScreen() {
              setSuccessPreimage(res.preimage || "OCP Lightning Success");
           } else if (payload.destination && payload.amount && solanaKeypair) {
              // For the hackathon, simulate the Solana execution if the payload returns SOL parameters
-             const connection = new globalThis.solanaWeb3.Connection("https://solana-rpc.publicnode.com");
-             const tx = new globalThis.solanaWeb3.Transaction().add(
-                globalThis.solanaWeb3.SystemProgram.transfer({
+             const connection = new Connection("https://api.mainnet-beta.solana.com");
+             const tx = new Transaction().add(
+                SystemProgram.transfer({
                    fromPubkey: solanaKeypair.publicKey,
-                   toPubkey: new globalThis.solanaWeb3.PublicKey(payload.destination),
+                   toPubkey: new PublicKey(payload.destination),
                    lamports: Math.floor(payload.amount * 1e9)
                 })
              );

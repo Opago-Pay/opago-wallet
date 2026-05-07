@@ -91,7 +91,7 @@ export default function ReceiveScreen() {
       
       const pollSolana = async () => {
         try {
-          const connection = new Connection("https://solana-rpc.publicnode.com");
+          const connection = new Connection("https://api.mainnet-beta.solana.com");
           const pubkey = new PublicKey(solanaAddress);
           const sigs = await connection.getSignaturesForAddress(pubkey, { limit: 1 });
           
@@ -114,8 +114,8 @@ export default function ReceiveScreen() {
         }
       };
 
-      pollSolana();
-      interval = setInterval(pollSolana, 4000);
+      // Reduced polling to 12 seconds to drastically avoid Solana mainnet-beta 429 bans
+      interval = setInterval(pollSolana, 12000);
     }
     return () => clearInterval(interval);
   }, [network, solanaAddress, isPaid]);

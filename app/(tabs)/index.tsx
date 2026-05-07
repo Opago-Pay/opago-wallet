@@ -47,7 +47,7 @@ export default function HomeScreen() {
     
     if (solanaAddress) {
       try {
-        const connection = new Connection("https://solana-rpc.publicnode.com");
+        const connection = new Connection("https://api.mainnet-beta.solana.com");
         const pubkey = new PublicKey(solanaAddress);
         const balance = await connection.getBalance(pubkey);
         setSolBalance(balance / 1e9);
@@ -88,7 +88,7 @@ export default function HomeScreen() {
         let solHistory: any[] = [];
         if (solanaAddress) {
            try {
-             const connection = new Connection("https://solana-rpc.publicnode.com");
+             const connection = new Connection("https://api.mainnet-beta.solana.com");
              const pubkey = new PublicKey(solanaAddress);
              const sigs = await connection.getSignaturesForAddress(pubkey, { limit: 5 });
              if (sigs.length > 0) {
@@ -195,21 +195,6 @@ export default function HomeScreen() {
     useCallback(() => {
       if (walletReady) {
         fetchBalancesAndTxs();
-        
-        // Also fetch again after 2.5 seconds to catch delayed L2 HTLC settlements
-        const timeout = setTimeout(() => {
-           fetchBalancesAndTxs();
-        }, 2500);
-
-        // Poll every 10 seconds to auto-detect incoming on-chain deposits without pull-to-refresh
-        const interval = setInterval(() => {
-           fetchBalancesAndTxs();
-        }, 10000);
-        
-        return () => {
-          clearTimeout(timeout);
-          clearInterval(interval);
-        };
       }
     }, [walletReady, solanaAddress])
   );
