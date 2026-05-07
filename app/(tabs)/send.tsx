@@ -205,13 +205,14 @@ export default function SendScreen() {
     };
   }, [pendingEidasInfo, solanaKeypair, eidSessionId]);
 
-  const handleCalculateOrSend = async () => {
-    if (!destination.trim()) {
+  const handleCalculateOrSend = async (autoScannedData?: string) => {
+    const targetInput = autoScannedData || destination;
+    if (!targetInput.trim()) {
       Alert.alert("Error", "Enter a BOLT-11 invoice or Lightning Address.");
       return;
     }
     
-    let rawInput = destination.trim();
+    let rawInput = targetInput.trim();
     let cleanInput = rawInput.toLowerCase();
     
     setStatusText('Resolving Protocol...');
@@ -378,8 +379,12 @@ export default function SendScreen() {
             style={StyleSheet.absoluteFillObject}
             onBarcodeScanned={({ data }) => {
               if (isScanning) {
-                setDestination(data.replace(/^lightning:/i, '').replace(/^lightnings:/i, '').toLowerCase());
+                const cleanData = data.replace(/^lightning:/i, '').replace(/^lightnings:/i, '').toLowerCase();
+                setDestination(cleanData);
                 setIsScanning(false);
+                setTimeout(() => {
+                  handleCalculateOrSend(cleanData);
+                }, 400); // Slight delay for UI to transition out of camera mode
               }
             }}
             barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
@@ -460,7 +465,8 @@ export default function SendScreen() {
                         const strictEidUrl = `eid://127.0.0.1:24727/eID-Client?tcTokenURL=${encodeURIComponent(data.tcTokenURL)}`;
                         
                         return IntentLauncher.startActivityAsync('android.intent.action.VIEW', {
-                           data: strictEidUrl
+                           data: strictEidUrl,
+                           flags: 268435456 // FLAG_ACTIVITY_NEW_TASK
                         }).catch(err => {
                            throw new Error("Konnte AusweisApp nicht starten: " + err.message);
                         });

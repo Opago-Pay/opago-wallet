@@ -35,8 +35,8 @@ const server = http.createServer((req, res) => {
         res.end(JSON.stringify({
           type: 'solana',
           destination: "7TMf8e7Upxp6X8wR361Gf6qQ7hH4HwG9P1iW5C3b9jGv",
-          amount: 0.003,
-          asset: "SOL"
+          amount: asset === 'USDC' ? 0.38 : 0.003,
+          asset: asset
         }));
       } else {
         res.end(JSON.stringify({ status: "ERROR", reason: "Unknown method" }));
@@ -46,7 +46,7 @@ const server = http.createServer((req, res) => {
       console.log("[OCP Server] Options wurden angefragt!");
       res.writeHead(200);
       res.end(JSON.stringify({
-        merchantName: "Hackathon Test Store",
+        merchantName: "Opago Checkout",
         fiatAmount: 0.35,
         fiatCurrency: "EUR",
         quoteId: "quote_" + Date.now(),
@@ -63,6 +63,13 @@ const server = http.createServer((req, res) => {
             asset: "SOL",
             chain: "Solana",
             amount: 0.003,
+            fee: 0.000005
+          },
+          {
+            method: "solana",
+            asset: "USDC",
+            chain: "Solana",
+            amount: 0.38,
             fee: 0.000005
           }
         ]
@@ -85,7 +92,7 @@ server.listen(PORT, '0.0.0.0', () => {
   
   for (const name of Object.keys(nets)) {
     for (const net of nets[name]) {
-      if (net.family === 'IPv4' && !net.internal) {
+      if (net.family === 'IPv4' && !net.internal && !name.toLowerCase().includes('vethernet') && !name.toLowerCase().includes('vmware')) {
         localIp = net.address;
       }
     }
@@ -95,10 +102,14 @@ server.listen(PORT, '0.0.0.0', () => {
   const encodedLnurl = encodeUrlToLNURL(apiUrl);
   
   console.log("=========================================");
-  console.log("1. Kopiere folgenden LNURL-String und füge ihn in der Opago Wallet in das 'Destination' Feld ein:");
-  console.log("\n" + encodedLnurl + "\n");
-  console.log("Oder als kompletter OCP URI-Fallback (z.B. für QR Codes):");
-  console.log(`lightning=${encodedLnurl}`);
+  console.log("OCP / OpenCryptoPay Demo Server läuft!");
+  console.log("Scanne diesen QR-Code mit der Opago Wallet App:");
+  
+  const qrcode = require('qrcode-terminal');
+  qrcode.generate(encodedLnurl, { small: true });
+
   console.log("=========================================");
+  console.log("Oder kopiere diesen String manuell ins 'Destination' Feld:");
+  console.log("\n" + encodedLnurl + "\n");
   console.log(`API URL (Intern): ${apiUrl}`);
 });

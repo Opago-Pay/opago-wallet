@@ -144,7 +144,7 @@ server.listen(PORT, '0.0.0.0', () => {
   let localIp = '127.0.0.1';
   for (const name of Object.keys(nets)) {
     for (const net of nets[name]) {
-      if (net.family === 'IPv4' && !net.internal) {
+      if (net.family === 'IPv4' && !net.internal && !name.toLowerCase().includes('vethernet') && !name.toLowerCase().includes('vmware')) {
         localIp = net.address;
       }
     }
